@@ -1,0 +1,8 @@
+.DS_Store
+*.zip
+*.pdf
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
