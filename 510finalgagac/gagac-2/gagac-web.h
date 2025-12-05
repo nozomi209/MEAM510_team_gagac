@@ -7,7 +7,7 @@ const char webpage[] PROGMEM = R"rawliteral(
 <title>Mobile Base Control</title>
 <style>
   body {
-    background: #ffffff;
+    background: #f4f7f6;
     font-family: "Poppins", sans-serif;
     display: flex;
     justify-content: center;
@@ -17,55 +17,111 @@ const char webpage[] PROGMEM = R"rawliteral(
   }
   .control-card {
     background: #fff;
-    border-radius: 18px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+    border-radius: 24px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.08);
     padding: 30px;
     width: 320px;
     text-align: center;
   }
   h2 {
-    color: #333;
-    font-size: 1.3em;
-    margin-bottom: 20px;
+    color: #444;
+    font-size: 1.4em;
+    margin-bottom: 25px;
+    font-weight: 600;
   }
   .slider-group {
-    margin-bottom: 20px;
+    margin-bottom: 25px;
     text-align: left;
   }
   label {
     font-size: 0.9em;
-    color: #555;
+    color: #666;
+    font-weight: 500;
+    margin-left: 2px;
   }
+  
+  /* Custom Slider Styling */
   input[type=range] {
+    -webkit-appearance: none;
     width: 100%;
-    accent-color: #7fa87f;
+    margin-top: 12px;
+    height: 8px;
+    border-radius: 5px;
+    background: #ececec; /* Light grey background */
+    outline: none;
+    cursor: pointer;
   }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #92C08E; /* Pastel Green */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+  
   .control-pad {
     display: grid;
     grid-template-columns: 80px 80px 80px;
     grid-template-rows: 80px 80px 80px;
     justify-content: center;
     align-items: center;
-    margin-top: 10px;
+    margin-top: 15px;
+    margin-bottom: 25px;
   }
   .btn {
-    background: #7fa87f;
+    background: #92C08E; /* Pastel Green */
     border: none;
     color: white;
     font-size: 1.2em;
-    border-radius: 12px;
+    border-radius: 14px;
     height: 60px;
     width: 60px;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 10px rgba(146, 192, 142, 0.4);
+  }
+  .btn:active {
+    transform: scale(0.95);
+    box-shadow: 0 2px 5px rgba(146, 192, 142, 0.3);
   }
   .btn:hover {
-    background: #689668;
+    background: #81b37d;
   }
+  
+  .mode-btn-group {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 25px;
+  }
+  .mode-btn {
+    flex: 1;
+    border: none;
+    color: white;
+    font-size: 0.95em;
+    font-weight: 600;
+    border-radius: 14px;
+    height: 50px;
+    cursor: pointer;
+    transition: all 0.3s;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  .mode-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+
   footer {
-    color: #aaa;
-    font-size: 0.8em;
-    margin-top: 15px;
+    color: #ccc;
+    font-size: 0.75em;
+    margin-top: 25px;
   }
 </style>
 </head>
@@ -90,7 +146,7 @@ const char webpage[] PROGMEM = R"rawliteral(
       <div></div>
 
       <button class="btn" id="btnL">L</button>
-      <button class="btn stop-btn" id="btnS">S</button>
+      <button class="btn" id="btnS">S</button>
       <button class="btn" id="btnR">R</button>
 
       <div></div>
@@ -98,11 +154,21 @@ const char webpage[] PROGMEM = R"rawliteral(
       <div></div>
     </div>
 
-    <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
-      <h3 style="font-size: 1em; color: #333; margin-bottom: 10px;">VIVE Tracking Data</h3>
-      <div style="text-align: left; font-size: 0.85em; color: #666;">
-        <div>X: <span id="viveXVal">0</span> mm</div>
-        <div>Y: <span id="viveYVal">0</span> mm</div>
+    <div class="mode-btn-group">
+      <button class="mode-btn" id="btnAuto" style="background:#F7E290;">
+        Start Auto
+      </button>
+      
+      <button class="mode-btn" id="btnVive" style="background:#E79DC3;">
+        Enable VIVE
+      </button>
+    </div>
+
+    <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
+      <h3 style="font-size: 0.9em; color: #888; margin-bottom: 10px; font-weight:500;">VIVE Tracking Data</h3>
+      <div style="text-align: left; font-size: 0.85em; color: #666; display:flex; justify-content: space-between; background:#f8f9fa; padding:12px; border-radius:10px;">
+        <div>X: <span id="viveXVal">0</span></div>
+        <div>Y: <span id="viveYVal">0</span></div>
         <div>Angle: <span id="viveAngleVal">0</span>°</div>
       </div>
     </div>
@@ -124,52 +190,107 @@ const char webpage[] PROGMEM = R"rawliteral(
     S: document.getElementById("btnS")
   };
 
-  // current status
-  let isMoving = false;
-  let currentMoveDirection = null;    // "F" or "B"
-  let isTurning = false;
-  let currentTurnDirection = null;    // "L" or "R"
+  // Update slider background gradient (Green to Light Grey)
+  function updateSliderBackground(slider) {
+    const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+    slider.style.background = `linear-gradient(to right, #92C08E 0%, #92C08E ${value}%, #ececec ${value}%, #ececec 100%)`;
+  }
 
-  // slider UI update
-  speedSlider.oninput = () => {
-    speedVal.innerText = speedSlider.value + "%";
+  // Init sliders
+  updateSliderBackground(speedSlider);
+  updateSliderBackground(turnSlider);
+
+  // Auto Mode Logic
+  const btnAuto = document.getElementById("btnAuto");
+  let autoMode = false;
+  
+  btnAuto.onclick = () => {
+    autoMode = !autoMode;
+    if (autoMode) {
+      btnAuto.innerText = "STOP Auto";
+      btnAuto.style.background = "#ef9a9a"; // Soft Red
+      sendCommand("AUTO_ON");
+    } else {
+      btnAuto.innerText = "Start Auto";
+      btnAuto.style.background = "#F3CD35"; // Pastel Yellow
+      sendCommand("AUTO_OFF");
+    }
   };
-  turnSlider.oninput = () => {
-    turnVal.innerText = turnSlider.value + "%";
+
+  // Safety check: Stop Auto Mode on manual input
+  function checkManualOverride() {
+    if (autoMode) {
+      btnAuto.click(); // Trigger stop logic
+      console.log("Manual Override: Auto Mode Stopped");
+    }
+  }
+
+  // VIVE Switch Logic
+  const btnVive = document.getElementById("btnVive");
+  let viveEnabled = false; 
+
+  btnVive.onclick = () => {
+    viveEnabled = !viveEnabled;
+    if (viveEnabled) {
+      btnVive.innerText = "Disable VIVE";
+      btnVive.style.background = "#ce93d8"; // Soft Purple
+      sendCommand("VIVE_ON");
+    } else {
+      btnVive.innerText = "Enable VIVE";
+      btnVive.style.background = "#E79DC3"; // Pastel Pink
+      sendCommand("VIVE_OFF");
+    }
+  };
+
+  // State
+  let isMoving = false;
+  let currentMoveDirection = null;    
+  let isTurning = false;
+  let currentTurnDirection = null;    
+
+  // Slider events
+  speedSlider.oninput = function() {
+    speedVal.innerText = this.value + "%";
+    updateSliderBackground(this);
+  };
+  turnSlider.oninput = function() {
+    turnVal.innerText = this.value + "%";
+    updateSliderBackground(this);
   };
 
   function sendCommand(cmd) {
     fetch("/cmd?data=" + cmd).catch(err => console.log(err));
   }
 
-  //adjust Speed slider(Q/W)
+  // Adjust Speed slider (Q/W)
   function adjustSpeed(delta) {
     let v = parseInt(speedSlider.value) + delta;
     v = Math.max(0, Math.min(100, v));
     speedSlider.value = v;
     speedVal.innerText = v + "%";
+    updateSliderBackground(speedSlider);
 
-    // update motor while forwarding ro backing
     if (isMoving && currentMoveDirection) {
       sendCommand(currentMoveDirection + v);
     }
   }
 
-  //adjust Turn slider(A/S)
+  // Adjust Turn slider (A/S)
   function adjustTurn(delta) {
     let v = parseInt(turnSlider.value) + delta;
     v = Math.max(0, Math.min(100, v));
     turnSlider.value = v;
     turnVal.innerText = v + "%";
+    updateSliderBackground(turnSlider);
 
-    // if turning, update turn factor live
     if (isTurning && currentTurnDirection) {
       sendCommand(currentTurnDirection + v);
     }
   }
 
-  //mouse control
+  // Mouse Control
   buttons.F.onmousedown = () => {
+    checkManualOverride();
     isMoving = true;
     currentMoveDirection = "F";
     isTurning = false;
@@ -177,6 +298,7 @@ const char webpage[] PROGMEM = R"rawliteral(
     sendCommand("F" + speedSlider.value);
   };
   buttons.B.onmousedown = () => {
+    checkManualOverride();
     isMoving = true;
     currentMoveDirection = "B";
     isTurning = false;
@@ -184,6 +306,7 @@ const char webpage[] PROGMEM = R"rawliteral(
     sendCommand("B" + speedSlider.value);
   };
   buttons.L.onmousedown = () => {
+    checkManualOverride();
     isTurning = true;
     currentTurnDirection = "L";
     isMoving = false;
@@ -191,14 +314,15 @@ const char webpage[] PROGMEM = R"rawliteral(
     sendCommand("L" + turnSlider.value);
   };
   buttons.R.onmousedown = () => {
+    checkManualOverride();
     isTurning = true;
     currentTurnDirection = "R";
     isMoving = false;
     currentMoveDirection = null;
     sendCommand("R" + turnSlider.value);
   };
-
   buttons.S.onmousedown = () => {
+    checkManualOverride();
     isMoving = false;
     isTurning = false;
     currentMoveDirection = null;
@@ -217,13 +341,13 @@ const char webpage[] PROGMEM = R"rawliteral(
     sendCommand("S");
   };
 
-  //keyboard control
+  // Keyboard Control
   document.addEventListener("keydown", (e) => {
     if (e.repeat) return;
 
     switch (e.key) {
-      
       case "ArrowUp":
+        checkManualOverride();
         isMoving = true;
         currentMoveDirection = "F";
         isTurning = false;
@@ -231,6 +355,7 @@ const char webpage[] PROGMEM = R"rawliteral(
         sendCommand("F" + speedSlider.value);
         break;
       case "ArrowDown":
+        checkManualOverride();
         isMoving = true;
         currentMoveDirection = "B";
         isTurning = false;
@@ -238,6 +363,7 @@ const char webpage[] PROGMEM = R"rawliteral(
         sendCommand("B" + speedSlider.value);
         break;
       case "ArrowLeft":
+        checkManualOverride();
         isTurning = true;
         currentTurnDirection = "L";
         isMoving = false;
@@ -245,14 +371,13 @@ const char webpage[] PROGMEM = R"rawliteral(
         sendCommand("L" + turnSlider.value);
         break;
       case "ArrowRight":
+        checkManualOverride();
         isTurning = true;
         currentTurnDirection = "R";
         isMoving = false;
         currentMoveDirection = null;
         sendCommand("R" + turnSlider.value);
         break;
-
-      // Q / W:Speed slider
       case "q":
       case "Q":
         adjustSpeed(-5);
@@ -261,8 +386,6 @@ const char webpage[] PROGMEM = R"rawliteral(
       case "W":
         adjustSpeed(+5);
         break;
-
-      // A / S:Turn slider
       case "a":
       case "A":
         adjustTurn(-5);
@@ -274,7 +397,6 @@ const char webpage[] PROGMEM = R"rawliteral(
     }
   });
 
-  // only release direction key will send commands
   document.addEventListener("keyup", (e) => {
     if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
       isMoving = false;
@@ -285,7 +407,7 @@ const char webpage[] PROGMEM = R"rawliteral(
     }
   });
 
-  // Update VIVE tracking data - 优化：合并为一个请求以减少网络包
+  // VIVE Data Update
   function updateViveData() {
     fetch("/viveData")
       .then(response => response.json())
@@ -297,9 +419,7 @@ const char webpage[] PROGMEM = R"rawliteral(
       .catch(err => console.log("VIVE data error:", err));
   }
 
-  // 更新间隔改为500ms，减少网络包（从100ms改为500ms，减少80%的网络请求）
-  // 如果还需要更少，可以改为1000ms（1秒更新一次）
-  setInterval(updateViveData, 500);
+  setInterval(updateViveData, 1000);
 </script>
 </body>
 </html>

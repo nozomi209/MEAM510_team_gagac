@@ -1,89 +1,69 @@
 // owner-4.ino
 // UART between owner and servant 
-//
-
-//ToF from [tof-3.ino] 
-//  void ToF_init();
-//  bool ToF_read(uint16_t d[3]);
-
-//servant recieves commands as strings like: F70, L50, R50
-
-//接线：
-// tof 3个：
-//        F: 前（粉色）；
-//        L1: 左前（绿色）
-//        L2: 左后（蓝色）
-//        左右不要装反掉
-
-//owner的18接servant的17；owner的17接servant的18
-//默认两个大轮子朝前
-
+// Right Wall Following with Auto Switch
 
 #include <HardwareSerial.h>
 
-// ToF function prototypes (tof-3.ino)
+// ToF function prototypes
 void ToF_init();
 bool ToF_read(uint16_t d[3]);
 
-// Wall-following behavior (behavior-wall.ino)
+// Wall-following behavior
 String decideWallFollowing(uint16_t F, uint16_t R1, uint16_t R2);
 
-
-//Owner: init UART1 on GPIO18 (RX) and GPIO17 (TX)
-// 接的时候千万要owner的18接servant的17；owner的17接servant的18！！！！
 HardwareSerial ServantSerial(1);
-
-//TOF reading: d[0]=Fromt, d[1]=L1, d[2]=L2
 uint16_t tofDist[3];
 
-//sebnd command to servant
+// [新增] 自动模式开关，默认关闭
+bool isAutoRunning = false;
+
 void sendToServant(const String &cmd) {
   ServantSerial.println(cmd);
-
-  //Serial.print("[TX to servant] ");
   Serial.println(cmd);
 }
 
-
-
 void setup() {
-  // USB serial
   Serial.begin(115200);
   delay(300);
-  Serial.println();
-  Serial.println("===== OWNER BOARD (ToF + UART to servant) =====");
-
-  // init TOF (tof-3.ino)
+  Serial.println("\n===== OWNER BOARD (Right Wall Logic) =====");
+  
   ToF_init();
 
-  // Servant: init UART1 on GPIO18 (RX) and GPIO17 (TX)
-  // 接的时候千万要owner的18接servant的17；owner的17接servant的18！
+  // Owner RX=18, TX=17
   ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
-  Serial.println("UART to servant ready");
+  Serial.println("UART to servant ready. Waiting for Start...");
 }
 
 void loop() {
-  //read tof distance
-  if (ToF_read(tofDist)) {
-    //tofDist[0] = 前
-    //tofDist[1] = 左前
-    //tofDist[2] = 左后
-    uint16_t F  = tofDist[0]; //粉色
-    uint16_t R1 = tofDist[1]; //绿色
-    uint16_t R2 = tofDist[2]; //蓝色
+  // 1. check web controller 发过来的指令
+  if (ServantSerial.available()) {
+    String webCmd = ServantSerial.readStringUntil('\n');
+    webCmd.trim();
 
-    // decide behavior, returns command string
-    String cmd = decideWallFollowing(F, R1, R2);
-
-    // send commands to servant
-    sendToServant(cmd);
-
-  } else {
-    //if sensor timeout，stop car
-    sendToServant("S");
+    if (webCmd == "AUTO_ON") {
+      isAutoRunning = true;
+      Serial.println(">>> AUTO MODE STARTED <<<");
+    } 
+    else if (webCmd == "AUTO_OFF") {
+      isAutoRunning = false;
+      sendToServant("S"); // 立刻停车
+      Serial.println(">>> AUTO MODE STOPPED <<<");
+    }
   }
 
+  // 2. auto mode 开了才跑巡墙
+  if (isAutoRunning) {
+    if (ToF_read(tofDist)) {
+      uint16_t F  = tofDist[0];
+      uint16_t R1 = tofDist[1];
+      uint16_t R2 = tofDist[2];
 
+      String cmd = decideWallFollowing(F, R1, R2);
+      sendToServant(cmd);
+    } else {
+       sendToServant("S");
+    }
+  } 
+  
   delay(50);
 }
-
