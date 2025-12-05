@@ -26,7 +26,7 @@ void ToF_init();
 bool ToF_read(uint16_t d[3]);
 
 // Wall-following behavior (behavior-wall.ino)
-String decideWallFollowing(uint16_t F, uint16_t L1, uint16_t L2);
+String decideWallFollowing(uint16_t F, uint16_t R1, uint16_t R2);
 
 
 //Owner: init UART1 on GPIO18 (RX) and GPIO17 (TX)
@@ -59,7 +59,7 @@ void setup() {
   // Servant: init UART1 on GPIO18 (RX) and GPIO17 (TX)
   // 接的时候千万要owner的18接servant的17；owner的17接servant的18！
   ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
-  Serial.println("UART to servant ready (using RX/TX pins)");
+  Serial.println("UART to servant ready");
 }
 
 void loop() {
@@ -69,11 +69,11 @@ void loop() {
     //tofDist[1] = 左前
     //tofDist[2] = 左后
     uint16_t F  = tofDist[0]; //粉色
-    uint16_t L1 = tofDist[1]; //绿色
-    uint16_t L2 = tofDist[2]; //蓝色
+    uint16_t R1 = tofDist[1]; //绿色
+    uint16_t R2 = tofDist[2]; //蓝色
 
     // decide behavior, returns command string
-    String cmd = decideWallFollowing(F, L1, L2);
+    String cmd = decideWallFollowing(F, R1, R2);
 
     // send commands to servant
     sendToServant(cmd);

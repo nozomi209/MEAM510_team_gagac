@@ -419,13 +419,15 @@ void handleCommand(String cmd) {
     }
     else if (cmd.startsWith("L")) {
         float turnRate = cmd.substring(1).toFloat();
-        setCarTurn(50, turnRate);
+        // [UODATE] 接线正确：左转需要负系数 (setCarTurn逻辑: 负数=左转)
+        setCarTurn(50, -turnRate);  
         Serial.printf("↰ left %.1f (L=%.1f, R=%.1f RPM)\n", 
                      turnRate, targetSpeedL, targetSpeedR);
     }
     else if (cmd.startsWith("R")) {
         float turnRate = cmd.substring(1).toFloat();
-        setCarTurn(50, -turnRate);
+        // [修改] 接线正确：右转需要正系数
+        setCarTurn(50, turnRate); 
         Serial.printf("↱ right %.1f (L=%.1f, R=%.1f RPM)\n", 
                      turnRate, targetSpeedL, targetSpeedR);
     }
@@ -596,8 +598,10 @@ void setup() {
         // movement control
         if (data.startsWith("F")) { setCarSpeed(data.substring(1).toFloat()); }
         else if (data.startsWith("B")) { setCarSpeed(-data.substring(1).toFloat()); }
-        else if (data.startsWith("L")) { setCarTurn(50, data.substring(1).toFloat()); }
-        else if (data.startsWith("R")) { setCarTurn(50, -data.substring(1).toFloat()); }
+        // [修改] 网页按L -> 传负数
+        else if (data.startsWith("L")) { setCarTurn(50, -data.substring(1).toFloat()); } 
+        // [修改] 网页按R -> 传正数
+        else if (data.startsWith("R")) { setCarTurn(50, data.substring(1).toFloat()); }
         else if (data == "S") { stopMotors(); }
 
         // slider
