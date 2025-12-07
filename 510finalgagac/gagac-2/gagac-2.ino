@@ -781,6 +781,14 @@ void loop() {
                          viveX, viveY, viveAngle,
                          viveFront.getStatus(), viveBack.getStatus());
         }
+        
+        // Send VIVE data to owner board via UART (every 100ms for navigation)
+        static unsigned long lastViveUartTime = 0;
+        if (millis() - lastViveUartTime > 100) {
+            lastViveUartTime = millis();
+            // Format: "VIVE:x.xx,y.yy,a.aa\n"
+            OwnerSerial.printf("VIVE:%.2f,%.2f,%.2f\n", viveX, viveY, viveAngle);
+        }
     }
     
     delay(5);
