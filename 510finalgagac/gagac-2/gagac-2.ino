@@ -104,6 +104,9 @@ int pwmOutputR = 0;
 hw_timer_t *controlTimer = NULL;
 volatile bool controlFlag = false;
 
+//VIVE 默认关掉
+bool isViveActive = false;
+
 unsigned long lastSpeedCalcTime = 0;
 long lastEncoderCountL = 0;
 long lastEncoderCountR = 0;
@@ -419,13 +422,15 @@ void handleCommand(String cmd) {
     }
     else if (cmd.startsWith("L")) {
         float turnRate = cmd.substring(1).toFloat();
-        setCarTurn(50, turnRate);
+        // [UODATE] 接线正确：左转需要负系数 (setCarTurn逻辑: 负数=左转)
+        setCarTurn(50, -turnRate);  
         Serial.printf("↰ left %.1f (L=%.1f, R=%.1f RPM)\n", 
                      turnRate, targetSpeedL, targetSpeedR);
     }
     else if (cmd.startsWith("R")) {
         float turnRate = cmd.substring(1).toFloat();
-        setCarTurn(50, -turnRate);
+        // [修改] 接线正确：右转需要正系数
+        setCarTurn(50, turnRate); 
         Serial.printf("↱ right %.1f (L=%.1f, R=%.1f RPM)\n", 
                      turnRate, targetSpeedL, targetSpeedR);
     }
@@ -596,9 +601,33 @@ void setup() {
         // movement control
         if (data.startsWith("F")) { setCarSpeed(data.substring(1).toFloat()); }
         else if (data.startsWith("B")) { setCarSpeed(-data.substring(1).toFloat()); }
-        else if (data.startsWith("L")) { setCarTurn(50, data.substring(1).toFloat()); }
-        else if (data.startsWith("R")) { setCarTurn(50, -data.substring(1).toFloat()); }
+        // [修改] 网页按L -> 传负数
+        else if (data.startsWith("L")) { setCarTurn(50, -data.substring(1).toFloat()); } 
+        // [修改] 网页按R -> 传正数
+        else if (data.startsWith("R")) { setCarTurn(50, data.substring(1).toFloat()); }
         else if (data == "S") { stopMotors(); }
+
+
+        // [新增] 转发 Auto 开关给 Owner
+        else if (data == "AUTO_ON") {
+            OwnerSerial.println("AUTO_ON"); 
+            Serial.println("Sent AUTO_ON to Owner");
+        }
+        else if (data == "AUTO_OFF") {
+            OwnerSerial.println("AUTO_OFF");
+            Serial.println("Sent AUTO_OFF to Owner");
+            stopMotors(); // 顺便让车停下
+        }
+        
+        // [新增] 本地处理 VIVE 开关
+        else if (data == "VIVE_ON") { 
+            isViveActive = true; 
+            Serial.println("VIVE System ACTIVATED");
+        }
+        else if (data == "VIVE_OFF") { 
+            isViveActive = false; 
+            Serial.println("VIVE System DISABLED");
+        }
 
         // slider
         else if (data.startsWith("SPEED=")) {
@@ -668,9 +697,9 @@ void setup() {
     Serial.printf("   Back tracker: GPIO%d\n", VIVE_PIN_BACK);
     
     // Synchronize with base stations
-    Serial.println("Synchronizing VIVE trackers...");
-    viveFront.synchronize(5);
-    viveBack.synchronize(5);
+    //Serial.println("Synchronizing VIVE trackers...");
+    //viveFront.synchronize(5);
+    //viveBack.synchronize(5);
     Serial.println("VIVE synchronization complete");
     Serial.println();
     
@@ -705,28 +734,27 @@ void setup() {
 
 void loop() {
     server.handleClient(); 
-
-    // Process VIVE tracking data
-    processViveData(viveFront, viveXFront, viveYFront);
-    processViveData(viveBack, viveXBack, viveYBack);
-    
-    // Calculate center position (average of front and back)
-    viveX = (float(viveXFront) + float(viveXBack)) / 2.0;
-    viveY = (float(viveYFront) + float(viveYBack)) / 2.0;
-    
-    // Calculate orientation angle from front and back positions
-    float deltaX = float(viveXBack) - float(viveXFront);
-    float deltaY = float(viveYBack) - float(viveYFront);
-    const float PI = 3.14159265;
-    viveAngle = (180.0 / PI) * fastAtan2(deltaY, deltaX) + 90.0;
-    
-    // Normalize angle to -180 to 180 range
-    if (viveAngle > 180.0) {
-        viveAngle -= 360.0;
-    } else if (viveAngle < -180.0) {
-        viveAngle += 360.0;
+    if (isViveActive) {
+        // Process VIVE tracking data
+        processViveData(viveFront, viveXFront, viveYFront);
+        processViveData(viveBack, viveXBack, viveYBack);
+        
+        // Calculate center position (average of front and back)
+        viveX = (float(viveXFront) + float(viveXBack)) / 2.0;
+        viveY = (float(viveYFront) + float(viveYBack)) / 2.0;
+        
+        // Calculate orientation angle from front and back positions
+        float deltaX = float(viveXBack) - float(viveXFront);
+        float deltaY = float(viveYBack) - float(viveYFront);
+        viveAngle = (180.0 / PI) * fastAtan2(deltaY, deltaX) + 90.0;
+        
+        // Normalize angle to -180 to 180 range
+        if (viveAngle > 180.0) {
+            viveAngle -= 360.0;
+        } else if (viveAngle < -180.0) {
+            viveAngle += 360.0;
+        }
     }
-
     calculateSpeed();
     
     //PID control
@@ -775,7 +803,8 @@ void loop() {
         
         // Print VIVE data periodically
         static unsigned long lastVivePrintTime = 0;
-        if (millis() - lastVivePrintTime > 1000) {
+        // 只有时间到了且web开关打开了才打印
+        if (millis() - lastVivePrintTime > 1000 && isViveActive) {
             lastVivePrintTime = millis();
             Serial.printf("📍 VIVE: X=%.1f, Y=%.1f, Angle=%.1f° | Status: F=%d, B=%d\n",
                          viveX, viveY, viveAngle,

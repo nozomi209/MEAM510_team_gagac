@@ -113,14 +113,14 @@ bool gotoPoint(float xDesired, float yDesired, float viveX, float viveY, float v
 // Returns command string
 String decideViveNavigation(float xDesired, float yDesired, 
                            float viveX, float viveY, float viveAngle,
-                           uint16_t F, uint16_t L1, uint16_t L2) {
+                           uint16_t F, uint16_t R1, uint16_t R2) {
     String cmd;
     
     // Check for obstacles first (safety)
     const uint16_t OBSTACLE_THRESHOLD = 150;  // 15cm
     
     // Emergency stop if too close to obstacle
-    if (F < OBSTACLE_THRESHOLD || L1 < 80) {
+    if (F < OBSTACLE_THRESHOLD || R1 < 80) {
         return "S";
     }
     
@@ -130,8 +130,8 @@ String decideViveNavigation(float xDesired, float yDesired,
     // If moving forward and obstacle detected, stop and turn
     if (cmd.startsWith("F") && F < 300) {
         // Obstacle ahead, turn away
-        if (L1 > L2 + 20) {
-            cmd = "L" + String(40);  // Turn left if more space on left
+        if (R1 < R2 - 20) {
+            cmd = "L" + String(40);  // Turn left if more space on left (away from right wall)
         } else {
             cmd = "R" + String(40);  // Turn right
         }

@@ -1,6 +1,6 @@
 // owner-4.ino
 // UART between owner and servant 
-// Integrated with Vive navigation
+// Integrated with Vive navigation and Right Wall Following
 
 //ToF from [tof-3.ino] 
 //  void ToF_init();
@@ -11,35 +11,31 @@
 //接线：
 // tof 3个：
 //        F: 前（粉色）；
-//        L1: 左前（绿色）
-//        L2: 左后（蓝色）
+//        R1: 右前（绿色）
+//        R2: 右后（蓝色）
 //        左右不要装反掉
 
 //owner的18接servant的17；owner的17接servant的18
 //默认两个大轮子朝前
 
-
 #include <HardwareSerial.h>
 
-// ToF function prototypes (tof-3.ino)
+// ToF function prototypes
 void ToF_init();
 bool ToF_read(uint16_t d[3]);
 
-// Wall-following behavior (behavior-wall.ino)
-String decideWallFollowing(uint16_t F, uint16_t L1, uint16_t L2);
+// Wall-following behavior
+String decideWallFollowing(uint16_t F, uint16_t R1, uint16_t R2);
 
 // Vive navigation behavior (behavior-vive.ino)
 bool gotoPoint(float xDesired, float yDesired, float viveX, float viveY, float viveAngle, String& cmd);
 String decideViveNavigation(float xDesired, float yDesired, 
                            float viveX, float viveY, float viveAngle,
-                           uint16_t F, uint16_t L1, uint16_t L2);
-
+                           uint16_t F, uint16_t R1, uint16_t R2);
 
 //Owner: init UART1 on GPIO18 (RX) and GPIO17 (TX)
 // 接的时候千万要owner的18接servant的17；owner的17接servant的18！！！！
 HardwareSerial ServantSerial(1);
-
-//TOF reading: d[0]=Fromt, d[1]=L1, d[2]=L2
 uint16_t tofDist[3];
 
 // Vive tracking data
@@ -58,6 +54,9 @@ enum OperationMode {
 
 OperationMode currentMode = MODE_WALL_FOLLOWING;
 
+// Auto mode switch (for web controller compatibility)
+bool isAutoRunning = false;
+
 // Target points (in mm, relative to Vive coordinate system)
 // Adjust these based on your actual target positions
 const float TARGET_RED_X = 2000.0;   // Red target X coordinate
@@ -72,8 +71,6 @@ const unsigned long AUTO_NAV_TIMEOUT = 30000;  // 30 seconds timeout
 //send command to servant
 void sendToServant(const String &cmd) {
   ServantSerial.println(cmd);
-
-  //Serial.print("[TX to servant] ");
   Serial.println(cmd);
 }
 
@@ -93,10 +90,7 @@ void parseViveData(String data) {
   }
 }
 
-
-
 void setup() {
-  // USB serial
   Serial.begin(115200);
   delay(300);
   Serial.println();
@@ -105,8 +99,7 @@ void setup() {
   // init TOF (tof-3.ino)
   ToF_init();
 
-  // Servant: init UART1 on GPIO18 (RX) and GPIO17 (TX)
-  // 接的时候千万要owner的18接servant的17；owner的17接servant的18！
+  // Owner RX=18, TX=17
   ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
   Serial.println("UART to servant ready (using RX/TX pins)");
   
@@ -115,11 +108,35 @@ void setup() {
   Serial.println("  'R' - Auto Navigate to RED target");
   Serial.println("  'B' - Auto Navigate to BLUE target");
   Serial.println("  'M' - Manual Mode");
+  Serial.println("  Web: 'AUTO_ON' / 'AUTO_OFF' - Enable/Disable auto mode");
   Serial.println("\nCurrent mode: WALL_FOLLOWING");
 }
 
 void loop() {
-  // Check for mode change commands from Serial
+  // 1. Check for web controller commands (AUTO_ON/AUTO_OFF)
+  if (ServantSerial.available()) {
+    String webCmd = ServantSerial.readStringUntil('\n');
+    webCmd.trim();
+
+    if (webCmd == "AUTO_ON") {
+      isAutoRunning = true;
+      if (currentMode == MODE_MANUAL) {
+        currentMode = MODE_WALL_FOLLOWING;
+      }
+      Serial.println(">>> AUTO MODE STARTED <<<");
+    } 
+    else if (webCmd == "AUTO_OFF") {
+      isAutoRunning = false;
+      sendToServant("S"); // 立刻停车
+      Serial.println(">>> AUTO MODE STOPPED <<<");
+    }
+    else if (webCmd.startsWith("VIVE:")) {
+      // Parse Vive data from servant
+      parseViveData(webCmd);
+    }
+  }
+  
+  // 2. Check for mode change commands from Serial
   if (Serial.available()) {
     char cmd = Serial.read();
     cmd = toupper(cmd);
@@ -128,21 +145,25 @@ void loop() {
       case 'W':
         currentMode = MODE_WALL_FOLLOWING;
         autoNavStartTime = 0;
+        isAutoRunning = true;  // Enable auto when switching to wall following
         Serial.println("Mode: WALL_FOLLOWING");
         break;
       case 'R':
         currentMode = MODE_AUTO_NAV_RED;
         autoNavStartTime = 0;
+        isAutoRunning = true;
         Serial.println("Mode: AUTO_NAV_RED");
         break;
       case 'B':
         currentMode = MODE_AUTO_NAV_BLUE;
         autoNavStartTime = 0;
+        isAutoRunning = true;
         Serial.println("Mode: AUTO_NAV_BLUE");
         break;
       case 'M':
         currentMode = MODE_MANUAL;
         autoNavStartTime = 0;
+        isAutoRunning = false;
         Serial.println("Mode: MANUAL");
         break;
     }
@@ -150,21 +171,22 @@ void loop() {
     while (Serial.available()) Serial.read();
   }
   
-  // Receive Vive data from servant board
-  if (ServantSerial.available()) {
-    String data = ServantSerial.readStringUntil('\n');
-    data.trim();
-    parseViveData(data);
+  // 3. Only run autonomous behaviors if auto mode is enabled
+  if (!isAutoRunning && currentMode != MODE_MANUAL) {
+    // Auto mode disabled, stop the car
+    sendToServant("S");
+    delay(50);
+    return;
   }
   
-  //read tof distance
+  // 4. Read ToF distance and execute behavior
   if (ToF_read(tofDist)) {
     //tofDist[0] = 前
-    //tofDist[1] = 左前
-    //tofDist[2] = 左后
+    //tofDist[1] = 右前
+    //tofDist[2] = 右后
     uint16_t F  = tofDist[0]; //粉色
-    uint16_t L1 = tofDist[1]; //绿色
-    uint16_t L2 = tofDist[2]; //蓝色
+    uint16_t R1 = tofDist[1]; //绿色
+    uint16_t R2 = tofDist[2]; //蓝色
 
     String cmd;
     bool targetReached = false;
@@ -174,7 +196,7 @@ void loop() {
       case MODE_AUTO_NAV_RED:
         if (!viveDataValid) {
           // No Vive data, fall back to wall following
-          cmd = decideWallFollowing(F, L1, L2);
+          cmd = decideWallFollowing(F, R1, R2);
         } else {
           // Initialize timer if just started
           if (autoNavStartTime == 0) {
@@ -187,7 +209,7 @@ void loop() {
             Serial.println("Auto nav timeout, switching to wall following");
             currentMode = MODE_WALL_FOLLOWING;
             autoNavStartTime = 0;
-            cmd = decideWallFollowing(F, L1, L2);
+            cmd = decideWallFollowing(F, R1, R2);
             break;
           }
           
@@ -203,7 +225,7 @@ void loop() {
           } else {
             // Use obstacle-aware navigation
             cmd = decideViveNavigation(TARGET_RED_X, TARGET_RED_Y,
-                                      viveX, viveY, viveAngle, F, L1, L2);
+                                      viveX, viveY, viveAngle, F, R1, R2);
           }
         }
         break;
@@ -211,7 +233,7 @@ void loop() {
       case MODE_AUTO_NAV_BLUE:
         if (!viveDataValid) {
           // No Vive data, fall back to wall following
-          cmd = decideWallFollowing(F, L1, L2);
+          cmd = decideWallFollowing(F, R1, R2);
         } else {
           // Initialize timer if just started
           if (autoNavStartTime == 0) {
@@ -224,7 +246,7 @@ void loop() {
             Serial.println("Auto nav timeout, switching to wall following");
             currentMode = MODE_WALL_FOLLOWING;
             autoNavStartTime = 0;
-            cmd = decideWallFollowing(F, L1, L2);
+            cmd = decideWallFollowing(F, R1, R2);
             break;
           }
           
@@ -240,7 +262,7 @@ void loop() {
           } else {
             // Use obstacle-aware navigation
             cmd = decideViveNavigation(TARGET_BLUE_X, TARGET_BLUE_Y,
-                                      viveX, viveY, viveAngle, F, L1, L2);
+                                      viveX, viveY, viveAngle, F, R1, R2);
           }
         }
         break;
@@ -248,7 +270,7 @@ void loop() {
       case MODE_WALL_FOLLOWING:
       default:
         // decide behavior, returns command string
-        cmd = decideWallFollowing(F, L1, L2);
+        cmd = decideWallFollowing(F, R1, R2);
         autoNavStartTime = 0;  // Reset timer
         break;
     }
@@ -260,8 +282,8 @@ void loop() {
     static unsigned long lastStatusTime = 0;
     if (millis() - lastStatusTime > 1000) {
       lastStatusTime = millis();
-      Serial.printf("Mode: %d | Vive: X=%.1f, Y=%.1f, A=%.1f° | ToF: F=%d, L1=%d, L2=%d\n",
-                   currentMode, viveX, viveY, viveAngle, F, L1, L2);
+      Serial.printf("Mode: %d | Auto: %s | Vive: X=%.1f, Y=%.1f, A=%.1f° | ToF: F=%d, R1=%d, R2=%d\n",
+                   currentMode, isAutoRunning ? "ON" : "OFF", viveX, viveY, viveAngle, F, R1, R2);
     }
 
   } else {
@@ -271,4 +293,3 @@ void loop() {
 
   delay(50);
 }
-

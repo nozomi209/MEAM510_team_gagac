@@ -1,6 +1,5 @@
 // behavior-wall.ino
 // wall following logic
-// motor wires are reversed, so L=Right, R=Left
 
 #include <Arduino.h>
 
@@ -12,60 +11,60 @@ static bool isValid(uint16_t d) {
 const uint16_t FRONT_TURN_TH   = 450;   // 45cm turn
 const uint16_t FRONT_BACKUP_TH = 120;   // 12cm backup
 
-const float LEFT_TARGET        = 100.0f; // 10cm ideal
-const float LEFT_FAR_HARD      = 140.0f; // >14cm is too far
-const float LEFT_CORNER_HARD   = 60.0f;  //<6cm dangerous
+const float RIGHT_TARGET        = 80.0f; // 8cm ideal
+const float RIGHT_FAR_HARD      = 140.0f; // >14cm is too far
+const float RIGHT_CORNER_HARD   = 60.0f;  //<6cm dangerous
 
 // speeds
 const uint8_t SPEED_FWD        = 30;
 const uint8_t SPEED_BACK       = 35;
 
-const uint8_t TURN_PIVOT       = 160;   //hard turn
-const uint8_t TURN_CORRECT     = 60;
+const uint8_t TURN_PIVOT       = 130;   //hard turn
+const uint8_t TURN_CORRECT     = 40;
 const uint8_t TURN_GENTLE      = 30;    //find wall speed
 const uint8_t TURN_TINY        = 10;
 
 const float ANGLE_ERR_TH       = 10.0f;
 
-String decideWallFollowing(uint16_t F_raw, uint16_t L1_raw, uint16_t L2_raw) {
+String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
 
     bool hasF  = isValid(F_raw);
-    bool hasL1 = isValid(L1_raw);
-    bool hasL2 = isValid(L2_raw);
+    bool hasR1 = isValid(R1_raw);
+    bool hasR2 = isValid(R2_raw);
 
     // fix sensor overflow issues
     float F  = (hasF && F_raw < 5000) ? F_raw  : 5000.0f;
-    float L1 = hasL1 ? L1_raw : LEFT_TARGET;
-    float L2 = hasL2 ? L2_raw : LEFT_TARGET;
+    float R1 = hasR1 ? R1_raw : RIGHT_TARGET;
+    float R2 = hasR2 ? R2_raw : RIGHT_TARGET;
     
     // 0. backup if too close
-    if (F < FRONT_BACKUP_TH || L1 < 50) {
+    if (F < FRONT_BACKUP_TH || R1 < 50) {
         return "B" + String(SPEED_BACK);
     }
 
     // 1. front wall
     if (F <= FRONT_TURN_TH) {
-        // send L -> physical Right (pivot)
         return "L" + String(TURN_PIVOT); 
     }
 
-    // 2. left too close
+    // 2. right too close
     // head angling in
-    if (L1 < L2 - 10.0f && L1 < LEFT_TARGET) {
+    if (R1 < R2 - 10.0f && R1 < RIGHT_TARGET) {
          return "L" + String(TURN_CORRECT); 
     }
     // absolute distance check
-    if (L1 < LEFT_CORNER_HARD || L2 < LEFT_CORNER_HARD) {
+    if (R1 < RIGHT_CORNER_HARD || R2 < RIGHT_CORNER_HARD) {
+ 
         return "L" + String(TURN_CORRECT); 
     }
 
-    // 3. left too far
-    if (L2 > LEFT_FAR_HARD && L1 >= L2) {
-        return "R" + String(TURN_GENTLE); // send R -> physical Left
+    // 3. right too far
+    if (R2 > RIGHT_FAR_HARD && R1 >= R2) {
+        return "R" + String(TURN_GENTLE); 
     }
 
     // 4. minor angle adjust
-    float e_angle = L1 - L2; 
+    float e_angle = R1 - R2; 
 
     if (e_angle < -ANGLE_ERR_TH) {
         return "L" + String(TURN_TINY); 

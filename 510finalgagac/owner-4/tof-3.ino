@@ -58,6 +58,7 @@ void ToF_init() {
   Serial.println("Sensors 1–3 ready.");
 }
 
+
 bool ToF_read(uint16_t d[3]) {
 
   bool timeout = false;
@@ -77,11 +78,10 @@ bool ToF_read(uint16_t d[3]) {
     return false;
   }
 
-  //debug
+  // R1, R2
   Serial.print("F: ");  Serial.print(d[0]); Serial.print(" mm   ");
-  Serial.print("L1: "); Serial.print(d[1]); Serial.print(" mm   ");
-  Serial.print("L2: "); Serial.print(d[2]); Serial.println(" mm");
+  Serial.print("R1: "); Serial.print(d[1]); Serial.print(" mm   ");
+  Serial.print("R2: "); Serial.print(d[2]); Serial.println(" mm");
 
   return true;
 }
-
