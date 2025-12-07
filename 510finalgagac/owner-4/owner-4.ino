@@ -35,7 +35,8 @@ enum OperationMode {
     MODE_WALL_FOLLOWING = 0,
     MODE_AUTO_NAV_RED = 1,
     MODE_AUTO_NAV_BLUE = 2,
-    MODE_MANUAL = 3
+    MODE_MANUAL = 3,
+    MODE_AUTO_NAV_3LOCS = 4  // [新增] 自动访问3个Vive位置（比赛要求）
 };
 
 OperationMode currentMode = MODE_WALL_FOLLOWING;
@@ -45,10 +46,16 @@ const float TARGET_RED_X = 2000.0;   // Red target X coordinate
 const float TARGET_RED_Y = 2000.0;   // Red target Y coordinate
 const float TARGET_BLUE_X = 6000.0;  // Blue target X coordinate
 const float TARGET_BLUE_Y = 2000.0;  // Blue target Y coordinate
+const float TARGET_LOC3_X = 4000.0;  // [新增] Location 3 X coordinate
+const float TARGET_LOC3_Y = 4000.0;  // [新增] Location 3 Y coordinate
 
 // [新增] Auto navigation timing
 unsigned long autoNavStartTime = 0;
-const unsigned long AUTO_NAV_TIMEOUT = 30000;  // 30 seconds timeout
+const unsigned long AUTO_NAV_TIMEOUT = 30000;  // 30 seconds timeout per location
+
+// [新增] 3位置序列导航状态
+uint8_t currentLocationIndex = 0;  // 0, 1, 2 对应三个位置
+const uint8_t NUM_LOCATIONS = 3;
 
 void sendToServant(const String &cmd) {
   ServantSerial.println(cmd);
@@ -86,6 +93,7 @@ void setup() {
   Serial.println("  'W' - Wall Following Mode");
   Serial.println("  'R' - Auto Navigate to RED target");
   Serial.println("  'B' - Auto Navigate to BLUE target");
+  Serial.println("  'V' - Auto Navigate to 3 Vive locations (Competition: 9pts)");
   Serial.println("  'M' - Manual Mode");
   Serial.println("  Web: 'AUTO_ON' / 'AUTO_OFF' - Enable/Disable auto mode");
   Serial.println("\nCurrent mode: WALL_FOLLOWING");
@@ -145,6 +153,13 @@ void loop() {
         autoNavStartTime = 0;
         isAutoRunning = false;
         Serial.println("Mode: MANUAL");
+        break;
+      case 'V':
+        currentMode = MODE_AUTO_NAV_3LOCS;
+        autoNavStartTime = 0;
+        currentLocationIndex = 0;  // 从第一个位置开始
+        isAutoRunning = true;
+        Serial.println("Mode: AUTO_NAV_3LOCS - Starting 3-location sequence");
         break;
     }
     // Clear remaining serial buffer
@@ -245,6 +260,78 @@ void loop() {
         }
       }
     }
+    // [新增] 自动访问3个Vive位置（比赛要求：9分，每个位置30秒，3分/位置）
+    else if (currentMode == MODE_AUTO_NAV_3LOCS) {
+      if (!viveDataValid) {
+        // No Vive data, fall back to wall following
+        cmd = decideWallFollowing(F, R1, R2);
+      } else {
+        // 获取当前目标位置坐标
+        float targetX, targetY;
+        if (currentLocationIndex == 0) {
+          targetX = TARGET_RED_X;
+          targetY = TARGET_RED_Y;
+        } else if (currentLocationIndex == 1) {
+          targetX = TARGET_BLUE_X;
+          targetY = TARGET_BLUE_Y;
+        } else {
+          targetX = TARGET_LOC3_X;
+          targetY = TARGET_LOC3_Y;
+        }
+        
+        // Initialize timer if just started
+        if (autoNavStartTime == 0) {
+          autoNavStartTime = millis();
+          Serial.printf("Starting navigation to Location %d (X=%.1f, Y=%.1f)\n", 
+                       currentLocationIndex + 1, targetX, targetY);
+        }
+        
+        // Check timeout for current location (30 seconds per location)
+        unsigned long elapsedTime = millis() - autoNavStartTime;
+        if (elapsedTime > AUTO_NAV_TIMEOUT) {
+          Serial.printf("Location %d timeout after %lu ms, moving to next location\n", 
+                       currentLocationIndex + 1, elapsedTime);
+          currentLocationIndex++;
+          autoNavStartTime = 0;  // Reset timer for next location
+          
+          // Check if all locations visited
+          if (currentLocationIndex >= NUM_LOCATIONS) {
+            Serial.println("All 3 locations completed (with timeout)!");
+            currentMode = MODE_WALL_FOLLOWING;
+            currentLocationIndex = 0;
+            cmd = "S";  // Stop
+          } else {
+            // Start next location immediately (timer reset, will start next cycle)
+            cmd = "S";  // Stop briefly
+          }
+        } else {
+          // Navigate to current target
+          targetReached = gotoPoint(targetX, targetY, viveX, viveY, viveAngle, cmd);
+          
+          if (targetReached) {
+            Serial.printf("Location %d reached! (%.1f, %.1f) - Time: %lu ms\n", 
+                         currentLocationIndex + 1, targetX, targetY, elapsedTime);
+            currentLocationIndex++;
+            autoNavStartTime = 0;  // Reset timer for next location
+            
+            // Check if all locations visited
+            if (currentLocationIndex >= NUM_LOCATIONS) {
+              Serial.println("All 3 locations completed successfully!");
+              currentMode = MODE_WALL_FOLLOWING;
+              currentLocationIndex = 0;
+              cmd = "S";  // Stop
+            } else {
+              // Move to next location (timer reset, will start next cycle)
+              cmd = "S";  // Stop briefly before moving to next location
+            }
+          } else {
+            // Use obstacle-aware navigation
+            cmd = decideViveNavigation(targetX, targetY,
+                                      viveX, viveY, viveAngle, F, R1, R2);
+          }
+        }
+      }
+    }
     // [新增] 手动模式：不发送命令（由web控制）
     else if (currentMode == MODE_MANUAL) {
       // Manual mode - do nothing, commands come from web
@@ -259,8 +346,16 @@ void loop() {
     static unsigned long lastStatusTime = 0;
     if (millis() - lastStatusTime > 1000) {
       lastStatusTime = millis();
-      Serial.printf("Mode: %d | Auto: %s | Vive: X=%.1f, Y=%.1f, A=%.1f° | ToF: F=%d, R1=%d, R2=%d\n",
-                   currentMode, isAutoRunning ? "ON" : "OFF", viveX, viveY, viveAngle, F, R1, R2);
+      if (currentMode == MODE_AUTO_NAV_3LOCS) {
+        // 显示3位置序列的详细状态
+        unsigned long elapsed = autoNavStartTime > 0 ? (millis() - autoNavStartTime) : 0;
+        Serial.printf("Mode: 3LOCS | Loc: %d/3 | Time: %lu/%lu ms | Auto: %s | Vive: X=%.1f, Y=%.1f, A=%.1f° | ToF: F=%d, R1=%d, R2=%d\n",
+                     currentLocationIndex + 1, elapsed, AUTO_NAV_TIMEOUT,
+                     isAutoRunning ? "ON" : "OFF", viveX, viveY, viveAngle, F, R1, R2);
+      } else {
+        Serial.printf("Mode: %d | Auto: %s | Vive: X=%.1f, Y=%.1f, A=%.1f° | ToF: F=%d, R1=%d, R2=%d\n",
+                     currentMode, isAutoRunning ? "ON" : "OFF", viveX, viveY, viveAngle, F, R1, R2);
+      }
     }
   } else {
     //if sensor timeout，stop car
