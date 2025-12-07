@@ -314,8 +314,8 @@ void setCarTurn(float speedPercent, float turnRate) {
     float baseSpeed = maxRPM * speedPercent / 100.0;
     
     float turnFactor = turnRate / 100.0;
-    targetSpeedL = baseSpeed * (1.0 + turnFactor);
-    targetSpeedR = baseSpeed * (1.0 - turnFactor);
+    targetSpeedL = baseSpeed * (1.0 + turnFactor);  // 
+    targetSpeedR = baseSpeed * (1.0 - turnFactor); ///
 }
 
 //test hardware
