@@ -22,31 +22,18 @@ HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 #define ENCODER_L_A   4
 #define ENCODER_L_B   5
 
-#define ENCODER_R_A   1
-#define ENCODER_R_B   2
+#define ENCODER_R_A   2
+#define ENCODER_R_B   1
 
 // VIVE Tracker pins
-#define VIVE_PIN_FRONT  23  // 我改掉了，本来是18 冲突了Front VIVE tracker
-#define VIVE_PIN_BACK   19  // Back VIVE tracker
+#define VIVE_PIN_FRONT  15  // 我改掉了，本来是18 19 冲突了Front VIVE tracker
+#define VIVE_PIN_BACK   16  // Back VIVE tracker
 
 //PWM setup
 #define PWM_FREQ      700
 #define PWM_RESOLUTION 10
 #define PWM_MAX       1023
 
-//~~~~~~~~~~wifi config~~~~~~~~~~~~~~~~
-//const char* SSID     = "MoXianBao";
-//const char* PASSWORD = "olivedog";
-
-/* ！！！use in lab！！！！！！！
-const char* SSID     = "TP-Link_8A8C";
-const char* PASSWORD = "12488674";
-IPAddress localIP(192, 168, 1, 120);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 255, 0);
-*/
-
-//remember to un- comment another line at void setup() if using lab wifi
 // ~~~~~~~~~~ Wi-Fi config (AP mode) ~~~~~~~~~~
 const char* AP_SSID = "ESP32-MobileBase";
 const char* AP_PASSWORD = "12345678"; 
@@ -304,7 +291,7 @@ void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
     
-    targetSpeedL = targetRPM;
+    targetSpeedL = 1.07*targetRPM; //给左轮加一点
     targetSpeedR = targetRPM;
 }
 
@@ -368,181 +355,48 @@ void testHardware() {
     while(Serial.available()) Serial.read();
 }
 
-// helper
-void printHelp() {
-
-    Serial.println("Command List ");
-    Serial.println("[Movement Control]");
-    Serial.println("F<speed>   - Forward (F50)");
-    Serial.println("B<speed>   - Back (B30) ");
-    Serial.println("L<rate>    - Left (L20)");
-    Serial.println("R<rate>    - Right (R20)");
-    Serial.println("S          - Stop");
-    Serial.println("[PID Parameters]");
-    Serial.println("KPB<val>   - Kp (KPB2.5)");
-    Serial.println("KIB<val>   - Ki (KIB0.7)");
-    Serial.println("KDB<val>   - Kd (KDB0.0)");
-    Serial.println("PID        - PID parameter");
-    Serial.println("[Feedforward]");
-    Serial.println("FFA<val>   - feedforwardA (FFA8.0)");
-    Serial.println("FFB<val>   - feedbackB (FFB100)");
-    Serial.println("FF1        - start feedforward");
-    Serial.println("FF0        - ban feedforward");
-    Serial.println("Testing");
-    Serial.println("PWML<val>  - PWML (PWML300)");
-    Serial.println("WMR<val>   - PWMR(PWMR300)");
-    Serial.println("DZ<val>    - Deadzone PWM (DZ300)");
-    Serial.println("RESET      - reset encoder");
-    Serial.println("TEST       - hardware testing");
-    Serial.println("[System Info]");
-    Serial.println("I          - Detailed status report");
-    Serial.println("H          - show helper");
-}
 
 
 void handleCommand(String cmd) {
     cmd.trim();
     cmd.toUpperCase();
 
-    //Serial.print("[SERVANT CMD] ");
-    //Serial.println(cmd);
+    // 只有在调试时才解开下面这一行，平时comment掉
+    // Serial.println(cmd); 
 
-    //keyboard control
+    // keyboard control
     if (cmd.startsWith("F")) {
         float speed = cmd.substring(1).toFloat();
         setCarSpeed(speed);
-        Serial.printf("▶ forward %.1f%% (target: L=%.1f, R=%.1f RPM)\n", 
-                     speed, targetSpeedL, targetSpeedR);
     }
     else if (cmd.startsWith("B")) {
         float speed = cmd.substring(1).toFloat();
         setCarSpeed(-speed);
-        Serial.printf("◀ back %.1f%% (target: L=%.1f, R=%.1f RPM)\n", 
-                     speed, abs(targetSpeedL), abs(targetSpeedR));
     }
     else if (cmd.startsWith("L")) {
         float turnRate = cmd.substring(1).toFloat();
-        // [UODATE] 接线正确：左转需要负系数 (setCarTurn逻辑: 负数=左转)
         setCarTurn(50, -turnRate);  
-        Serial.printf("↰ left %.1f (L=%.1f, R=%.1f RPM)\n", 
-                     turnRate, targetSpeedL, targetSpeedR);
     }
     else if (cmd.startsWith("R")) {
         float turnRate = cmd.substring(1).toFloat();
-        // [修改] 接线正确：右转需要正系数
         setCarTurn(50, turnRate); 
-        Serial.printf("↱ right %.1f (L=%.1f, R=%.1f RPM)\n", 
-                     turnRate, targetSpeedL, targetSpeedR);
     }
     else if (cmd == "S") {
         stopMotors();
-        Serial.println("Motor stopped");
     }
-    
-    // PID base
-    else if (cmd.startsWith("KPB")) {
-        Kp_base = cmd.substring(3).toFloat();
-        Serial.printf("Kp base set to: %.3f\n", Kp_base);
-        integralL = 0;
-        integralR = 0;
-    }
-    else if (cmd.startsWith("KIB")) {
-        Ki_base = cmd.substring(3).toFloat();
-        Serial.printf("Ki base set to: %.3f\n", Ki_base);
-        integralL = 0;
-        integralR = 0;
-    }
-    else if (cmd.startsWith("KDB")) {
-        Kd_base = cmd.substring(3).toFloat();
-        Serial.printf("Kd base set to: %.3f\n", Kd_base);
-    }
-    else if (cmd == "PID") {
-        Serial.println("\ncurrent PID parameter:");
-        Serial.printf("   base: Kp=%.3f, Ki=%.3f, Kd=%.3f\n", 
-                     Kp_base, Ki_base, Kd_base);
-        Serial.printf("   current increase: Kp=%.3f, Ki=%.3f \n", Kp, Ki);
-        Serial.printf("   feedforward parameter: A=%.2f, B=%.2f (%s)\n", 
-                     feedforwardA, feedforwardB,
-                     useFeedforward ? "start" : "ban");
-        Serial.printf("   deadzone PWM: %d\n\n", deadZonePWM);
-    }
-    
-    // feedforward parameter
-    else if (cmd.startsWith("FFA")) {
-        feedforwardA = cmd.substring(3).toFloat();
-        Serial.printf("FFA: %.3f\n", feedforwardA);
-    }
-    else if (cmd.startsWith("FFB")) {
-        feedforwardB = cmd.substring(3).toFloat();
-        Serial.printf("FFB: %.3f\n", feedforwardB);
-    }
-    else if (cmd == "FF1") {
-        useFeedforward = true;
-        Serial.println("feedforward starts");
-    }
-    else if (cmd == "FF0") {
-        useFeedforward = false;
-        Serial.println("feedforward bans（pure PID mode）");
-    }
-    else if (cmd.startsWith("PWML")) {
-        int pwm = cmd.substring(4).toInt();
-        setMotorL(pwm);
-        targetSpeedL = 0;  // PID banned
-        Serial.printf("left motor pure PWM: %d (PID banned)\n", pwm);
-    }
-    else if (cmd.startsWith("PWMR")) {
-        int pwm = cmd.substring(4).toInt();
-        setMotorR(pwm);
-        targetSpeedR = 0;  // PID banned
-        Serial.printf("right motor pure PWM: %d (PID banned)\n", pwm);
-    }
-    else if (cmd == "I") {
-        Serial.println("Motor Status Report");
-        Serial.printf("left Motor:\n");
-        Serial.printf("target speed:  %6.2f RPM                        ║\n", targetSpeedL);
-        Serial.printf("current speed:  %6.2f RPM                        ║\n", speedL);
-        Serial.printf("error:      %+6.2f RPM                       ║\n", errorL);
-        Serial.printf("integral:    %+6.2f                           ║\n", integralL);
-        Serial.printf("PWM output:   %4d / 1023                       ║\n", pwmOutputL);
-        Serial.printf("Right Motor:                                        ║\n");
-        Serial.printf("target speed:  %6.2f RPM                        ║\n", targetSpeedR);
-        Serial.printf("current speed:  %6.2f RPM                        ║\n", speedR);
-        Serial.printf("error:      %+6.2f RPM                       ║\n", errorR);
-        Serial.printf("integral:    %+6.2f                           ║\n", integralR);
-        Serial.printf("PWM output:   %4d / 1023                       ║\n", pwmOutputR);
-        Serial.println("────────────────────────────────────────────────");
-        Serial.printf("encoder counts:\n");
-        Serial.printf("left encoder:  %8ld pulses\n", encoderCountL);
-        Serial.printf("right encoder:  %8ld pulses\n", encoderCountR);
-        Serial.println("╟────────────────────────────────────────────────╢");
-        Serial.printf("Control Parameter:\n");
-        Serial.printf("current Kp: %.3f  Ki: %.3f  Kd: %.3f \n", Kp, Ki, Kd);
-        Serial.printf("feedforward: %s (A=%.2f, B=%.2f)\n", 
-                     useFeedforward ? "ON " : "OFF", feedforwardA, feedforwardB);
-        Serial.printf("deadzone PWM: %d \n", deadZonePWM);
-    }
-    else if (cmd == "H" || cmd == "HELP") {
-        printHelp();
-    }
+    // PID / Feedforward 参数
+    else if (cmd.startsWith("KPB")) Kp_base = cmd.substring(3).toFloat();
+    else if (cmd.startsWith("KIB")) Ki_base = cmd.substring(3).toFloat();
+    else if (cmd.startsWith("KDB")) Kd_base = cmd.substring(3).toFloat();
+    else if (cmd.startsWith("FFA")) feedforwardA = cmd.substring(3).toFloat();
+    else if (cmd.startsWith("FFB")) feedforwardB = cmd.substring(3).toFloat();
+    else if (cmd == "FF1") useFeedforward = true;
+    else if (cmd == "FF0") useFeedforward = false;
     else if (cmd == "RESET") {
         encoderCountL = 0;
         encoderCountR = 0;
-        lastEncoderCountL = 0;
-        lastEncoderCountR = 0;
-        Serial.println("ENcoder counts reset");
     }
-    else if (cmd.startsWith("DZ")) {
-        deadZonePWM = cmd.substring(2).toInt();
-        Serial.printf("deadzone PWM set to: %d\n", deadZonePWM);
-    }
-    else if (cmd == "TEST") {
-        stopMotors();
-        delay(500);
-        testHardware();
-    }
-    else {
-        Serial.println("unknow commands, see helper");
-    }
+
 }
 
 WebServer server(80);
@@ -715,21 +569,9 @@ void setup() {
     timerAttachInterrupt(controlTimer, &onControlTimer);
     timerAlarm(controlTimer, CONTROL_PERIOD_MS * 1000, true, 0);
     
-    Serial.printf("PID timer: %dms (%.1fHz)\n", CONTROL_PERIOD_MS, 1000.0/CONTROL_PERIOD_MS);
-    Serial.printf("PID base: Kp=%.3f, Ki=%.3f, Kd=%.3f\n", Kp_base, Ki_base, Kd_base);
-    Serial.printf("feedforward: A=%.2f, B=%.2f (%s)\n", 
-                  feedforwardA, feedforwardB, 
-                  useFeedforward ? "start" : "ban");
-    Serial.printf("deadzone: %d PWM\n", deadZonePWM);
-    Serial.println();
-    
     lastSpeedCalcTime = millis();
     
-
     Serial.println("System Ready");
-    Serial.println("'H'- for helper");
-    Serial.println("'TEST'- for hardware testing");
-    Serial.println();
 }
 
 void loop() {
@@ -769,10 +611,11 @@ void loop() {
     }
     
     // when usb directly power servent (unplug the 5v wire from owner!!!!)
-    if (Serial.available()) {
+    /*if (Serial.available()) {
         String cmd = Serial.readStringUntil('\n');
         handleCommand(cmd);
     }
+    */
 
     //commands from owner (UART)
         // ===== commands from owner (UART) =====
@@ -813,7 +656,7 @@ void loop() {
         
         // Send VIVE data to owner board via UART (every 100ms for navigation)
         static unsigned long lastViveUartTime = 0;
-        if (millis() - lastViveUartTime > 100) {
+        if (millis() - lastViveUartTime > 100 && isViveActive) {
             lastViveUartTime = millis();
             // Format: "VIVE:x.xx,y.yy,a.aa\n"
             OwnerSerial.printf("VIVE:%.2f,%.2f,%.2f\n", viveX, viveY, viveAngle);
