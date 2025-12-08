@@ -26,7 +26,7 @@ HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 #define ENCODER_R_B   2
 
 // VIVE Tracker pins
-#define VIVE_PIN_FRONT  18  // Front VIVE tracker
+#define VIVE_PIN_FRONT  23  // 我改掉了，本来是18 冲突了Front VIVE tracker
 #define VIVE_PIN_BACK   19  // Back VIVE tracker
 
 //PWM setup
