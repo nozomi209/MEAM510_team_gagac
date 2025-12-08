@@ -7,7 +7,6 @@
 // Navigation parameters
 const float ANGLE_TOLERANCE = 20.0f;      // degrees - angle error threshold for turning
 const float DISTANCE_TOLERANCE = 5.0f;    // mm - distance threshold to consider reached
-const float PI = 3.14159265f;
 
 // Fast atan2 implementation (from vive_utils)
 float fastAtan2(float y, float x) {
