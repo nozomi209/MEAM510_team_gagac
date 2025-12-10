@@ -93,6 +93,7 @@ volatile bool controlFlag = false;
 
 //VIVE 默认关掉
 bool isViveActive = false;
+bool isViveTestMode = false;  // 测试模式：输出详细坐标数据
 
 unsigned long lastSpeedCalcTime = 0;
 long lastEncoderCountL = 0;
@@ -482,6 +483,15 @@ void setup() {
             isViveActive = false; 
             Serial.println("VIVE System DISABLED");
         }
+        else if (data == "VIVE_TEST_ON") {
+            isViveTestMode = true;
+            isViveActive = true;
+            Serial.println("VIVE Test Mode ACTIVATED - 详细数据输出");
+        }
+        else if (data == "VIVE_TEST_OFF") {
+            isViveTestMode = false;
+            Serial.println("VIVE Test Mode DISABLED");
+        }
 
         // slider
         else if (data.startsWith("SPEED=")) {
@@ -610,12 +620,49 @@ void loop() {
         setMotorR(pwmOutputR);
     }
     
-    // when usb directly power servent (unplug the 5v wire from owner!!!!)
-    /*if (Serial.available()) {
+    // 串口命令（用于测试，USB直接供电时启用）
+    if (Serial.available()) {
         String cmd = Serial.readStringUntil('\n');
-        handleCommand(cmd);
+        cmd.trim();
+        cmd.toUpperCase();
+        
+        // VIVE测试命令
+        if (cmd == "VIVE_TEST_ON" || cmd == "TEST_ON") {
+            isViveTestMode = true;
+            isViveActive = true;
+            Serial.println("✅ VIVE 测试模式已启用 - 每200ms输出详细数据");
+            Serial.println("   发送 'VIVE_TEST_OFF' 或 'TEST_OFF' 关闭测试模式");
+        }
+        else if (cmd == "VIVE_TEST_OFF" || cmd == "TEST_OFF") {
+            isViveTestMode = false;
+            Serial.println("❌ VIVE 测试模式已关闭");
+        }
+        else if (cmd == "VIVE_ON") {
+            isViveActive = true;
+            Serial.println("✅ VIVE 系统已激活");
+        }
+        else if (cmd == "VIVE_OFF") {
+            isViveActive = false;
+            isViveTestMode = false;
+            Serial.println("❌ VIVE 系统已关闭");
+        }
+        else if (cmd == "VIVE_STATUS" || cmd == "STATUS") {
+            Serial.println("═══════════════════════════════════════");
+            Serial.println("📍 VIVE 系统状态");
+            Serial.println("───────────────────────────────────────");
+            Serial.printf("系统激活: %s\n", isViveActive ? "是" : "否");
+            Serial.printf("测试模式: %s\n", isViveTestMode ? "是" : "否");
+            Serial.printf("前跟踪器状态: %d (0=无信号, 1=仅同步, 2=接收中)\n", viveFront.getStatus());
+            Serial.printf("后跟踪器状态: %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
+            Serial.printf("当前坐标: X=%.2f, Y=%.2f\n", viveX, viveY);
+            Serial.printf("当前角度: %.2f°\n", viveAngle);
+            Serial.println("═══════════════════════════════════════");
+        }
+        else {
+            // 其他命令交给handleCommand处理
+            handleCommand(cmd);
+        }
     }
-    */
 
     //commands from owner (UART)
         // ===== commands from owner (UART) =====
@@ -646,8 +693,35 @@ void loop() {
         
         // Print VIVE data periodically
         static unsigned long lastVivePrintTime = 0;
-        // 只有时间到了且web开关打开了才打印
-        if (millis() - lastVivePrintTime > 1000 && isViveActive) {
+        // 测试模式：更频繁、更详细的输出
+        if (isViveTestMode && millis() - lastVivePrintTime > 200) {
+            lastVivePrintTime = millis();
+            // 获取原始坐标（未滤波）
+            uint16_t rawXFront = viveFront.getXCoordinate();
+            uint16_t rawYFront = viveFront.getYCoordinate();
+            uint16_t rawXBack = viveBack.getXCoordinate();
+            uint16_t rawYBack = viveBack.getYCoordinate();
+            
+            Serial.println("═══════════════════════════════════════");
+            Serial.printf("📍 VIVE 测试数据 [%lu ms]\n", millis());
+            Serial.println("───────────────────────────────────────");
+            Serial.printf("前跟踪器 (Front):\n");
+            Serial.printf("  原始坐标: X=%d, Y=%d\n", rawXFront, rawYFront);
+            Serial.printf("  滤波后:   X=%d, Y=%d\n", viveXFront, viveYFront);
+            Serial.printf("  状态:     %d (0=无信号, 1=仅同步, 2=接收中)\n", viveFront.getStatus());
+            Serial.printf("后跟踪器 (Back):\n");
+            Serial.printf("  原始坐标: X=%d, Y=%d\n", rawXBack, rawYBack);
+            Serial.printf("  滤波后:   X=%d, Y=%d\n", viveXBack, viveYBack);
+            Serial.printf("  状态:     %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
+            Serial.println("───────────────────────────────────────");
+            Serial.printf("中心位置: X=%.2f, Y=%.2f\n", viveX, viveY);
+            Serial.printf("朝向角度: %.2f°\n", viveAngle);
+            Serial.printf("前后距离: %.2f (用于验证)\n", 
+                         sqrt(pow(viveXBack - viveXFront, 2) + pow(viveYBack - viveYFront, 2)));
+            Serial.println("═══════════════════════════════════════\n");
+        }
+        // 正常模式：1秒输出一次
+        else if (!isViveTestMode && millis() - lastVivePrintTime > 1000 && isViveActive) {
             lastVivePrintTime = millis();
             Serial.printf("📍 VIVE: X=%.1f, Y=%.1f, Angle=%.1f° | Status: F=%d, B=%d\n",
                          viveX, viveY, viveAngle,
