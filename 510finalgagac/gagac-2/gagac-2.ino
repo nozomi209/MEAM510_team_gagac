@@ -27,8 +27,8 @@ HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 
 // VIVE Tracker pins
 // 注意：两个tracker都安装在车后部分的两边（左右排列）
-#define VIVE_PIN_FRONT  15  // 跟踪器1：车后左边 VIVE tracker (GPIO15)
-#define VIVE_PIN_BACK   16  // 跟踪器2：车后右边 VIVE tracker (GPIO16)
+#define VIVE_PIN_FRONT  6   // 跟踪器1：车后左边 VIVE tracker (GPIO6)
+#define VIVE_PIN_BACK   7   // 跟踪器2：车后右边 VIVE tracker (GPIO7)
 
 // 角度计算偏移量（根据实际测试调整）
 // 如果计算出的角度方向不对，可以尝试改为 -90.0 或其他值
@@ -415,8 +415,8 @@ void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    //来自 owner 的 UART
-    OwnerSerial.begin(115200, SERIAL_8N1, 6, 7);
+    //来自 owner 的 UART（RX=GPIO17, TX=GPIO18）
+    OwnerSerial.begin(115200, SERIAL_8N1, 17, 18);
     Serial.println("UART from owner ready");
     
     WiFi.mode(WIFI_AP);
@@ -433,10 +433,22 @@ void setup() {
 
     // VIVE data endpoint - 合并为一个API以减少网络包
     server.on("/viveData", [](){
-        // 返回JSON格式，包含所有VIVE数据
-        String json = "{\"x\":" + String(viveX) + 
-                     ",\"y\":" + String(viveY) + 
-                     ",\"angle\":" + String(viveAngle) + "}";
+        // 返回中心坐标/角度，以及两只tracker的原始/滤波数据与状态
+        uint16_t rawXFront = viveFront.getXCoordinate();
+        uint16_t rawYFront = viveFront.getYCoordinate();
+        uint16_t rawXBack  = viveBack.getXCoordinate();
+        uint16_t rawYBack  = viveBack.getYCoordinate();
+
+        String json = "{";
+        json += "\"x\":" + String(viveX);
+        json += ",\"y\":" + String(viveY);
+        json += ",\"angle\":" + String(viveAngle);
+        json += ",\"frontRaw\":{\"x\":" + String(rawXFront) + ",\"y\":" + String(rawYFront) + "}";
+        json += ",\"backRaw\":{\"x\":" + String(rawXBack) + ",\"y\":" + String(rawYBack) + "}";
+        json += ",\"frontFiltered\":{\"x\":" + String(viveXFront) + ",\"y\":" + String(viveYFront) + "}";
+        json += ",\"backFiltered\":{\"x\":" + String(viveXBack) + ",\"y\":" + String(viveYBack) + "}";
+        json += ",\"status\":{\"front\":" + String(viveFront.getStatus()) + ",\"back\":" + String(viveBack.getStatus()) + "}";
+        json += "}";
         server.send(200, "application/json", json);
     });
     
@@ -477,6 +489,12 @@ void setup() {
             OwnerSerial.println("AUTO_OFF");
             Serial.println("Sent AUTO_OFF to Owner");
             stopMotors(); // 顺便让车停下
+        }
+        
+        // [新增] 转发参数调整命令给 Owner
+        else if (data.startsWith("PARAM:")) {
+            OwnerSerial.println(data); // 直接转发 "PARAM:参数名=值"
+            Serial.printf("Sent parameter update: %s\n", data.c_str());
         }
         
         // [新增] 本地处理 VIVE 开关

@@ -166,10 +166,107 @@ const char webpage[] PROGMEM = R"rawliteral(
 
     <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
       <h3 style="font-size: 0.9em; color: #888; margin-bottom: 10px; font-weight:500;">VIVE Tracking Data</h3>
-      <div style="text-align: left; font-size: 0.85em; color: #666; display:flex; justify-content: space-between; background:#f8f9fa; padding:12px; border-radius:10px;">
-        <div>X: <span id="viveXVal">0</span></div>
-        <div>Y: <span id="viveYVal">0</span></div>
-        <div>Angle: <span id="viveAngleVal">0</span>°</div>
+      <div style="text-align: left; font-size: 0.85em; color: #666; display:flex; flex-direction: column; gap:10px; background:#f8f9fa; padding:12px; border-radius:10px;">
+        <div style="display:flex; justify-content: space-between;">
+          <div>Center X: <span id="viveXVal">0</span></div>
+          <div>Center Y: <span id="viveYVal">0</span></div>
+          <div>Angle: <span id="viveAngleVal">0</span>°</div>
+        </div>
+        <div style="display:flex; gap:12px; flex-wrap: wrap;">
+          <div style="flex:1; min-width:130px; background:#fff; border-radius:8px; padding:8px;">
+            <div style="font-weight:600; color:#555;">Front (GPIO15 左)</div>
+            <div>Raw: X=<span id="frontRawX">0</span>, Y=<span id="frontRawY">0</span></div>
+            <div>Filtered: X=<span id="frontFiltX">0</span>, Y=<span id="frontFiltY">0</span></div>
+            <div>Status: <span id="frontStatus">0</span></div>
+          </div>
+          <div style="flex:1; min-width:130px; background:#fff; border-radius:8px; padding:8px;">
+            <div style="font-weight:600; color:#555;">Back (GPIO16 右)</div>
+            <div>Raw: X=<span id="backRawX">0</span>, Y=<span id="backRawY">0</span></div>
+            <div>Filtered: X=<span id="backFiltX">0</span>, Y=<span id="backFiltY">0</span></div>
+            <div>Status: <span id="backStatus">0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 参数调整面板 -->
+    <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h3 style="font-size: 0.9em; color: #888; margin: 0; font-weight:500;">巡墙参数调整</h3>
+        <button id="paramToggle" style="background: #92C08E; border: none; color: white; padding: 5px 15px; border-radius: 8px; cursor: pointer; font-size: 0.8em;">展开</button>
+      </div>
+      <div id="paramPanel" style="display: none;">
+        <!-- 前方避障参数 -->
+        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">前方避障</h4>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前方避障距离: <span id="frontTurnThVal">250</span>mm</label>
+            <input type="range" id="frontTurnTh" min="100" max="500" value="250" step="10">
+          </div>
+          <div class="slider-group">
+            <label>紧急倒车距离: <span id="frontBackupThVal">50</span>mm</label>
+            <input type="range" id="frontBackupTh" min="20" max="150" value="50" step="5">
+          </div>
+        </div>
+
+        <!-- 巡墙距离参数 -->
+        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">巡墙距离</h4>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>太近阈值: <span id="wallTooCloseVal">50</span>mm</label>
+            <input type="range" id="wallTooClose" min="20" max="100" value="50" step="5">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>理想距离: <span id="wallIdealVal">80</span>mm</label>
+            <input type="range" id="wallIdeal" min="50" max="150" value="80" step="5">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>太远阈值: <span id="wallTooFarVal">120</span>mm</label>
+            <input type="range" id="wallTooFar" min="80" max="200" value="120" step="5">
+          </div>
+          <div class="slider-group">
+            <label>丢墙阈值: <span id="rightLostWallVal">200</span>mm</label>
+            <input type="range" id="rightLostWall" min="150" max="300" value="200" step="10">
+          </div>
+        </div>
+
+        <!-- 速度参数 -->
+        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">速度参数</h4>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前进速度: <span id="speedFwdVal">50</span></label>
+            <input type="range" id="speedFwd" min="20" max="100" value="50" step="5">
+          </div>
+          <div class="slider-group">
+            <label>倒车速度: <span id="speedBackVal">25</span></label>
+            <input type="range" id="speedBack" min="10" max="50" value="25" step="5">
+          </div>
+        </div>
+
+        <!-- 转向力度参数 -->
+        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">转向力度</h4>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>原地旋转: <span id="turnSpinVal">120</span></label>
+            <input type="range" id="turnSpin" min="50" max="200" value="120" step="10">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>左转修正: <span id="turnCorrectVal">12</span></label>
+            <input type="range" id="turnCorrect" min="5" max="50" value="12" step="1">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>右转找墙: <span id="turnGentleVal">12</span></label>
+            <input type="range" id="turnGentle" min="5" max="50" value="12" step="1">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>强力找墙: <span id="turnHardFindVal">120</span></label>
+            <input type="range" id="turnHardFind" min="50" max="200" value="120" step="10">
+          </div>
+          <div class="slider-group">
+            <label>微调力度: <span id="turnTinyVal">10</span></label>
+            <input type="range" id="turnTiny" min="5" max="30" value="10" step="1">
+          </div>
+        </div>
       </div>
     </div>
 
@@ -415,11 +512,71 @@ const char webpage[] PROGMEM = R"rawliteral(
         document.getElementById("viveXVal").innerText = parseFloat(data.x).toFixed(1);
         document.getElementById("viveYVal").innerText = parseFloat(data.y).toFixed(1);
         document.getElementById("viveAngleVal").innerText = parseFloat(data.angle).toFixed(1);
+        if (data.frontRaw && data.backRaw) {
+          document.getElementById("frontRawX").innerText = data.frontRaw.x || 0;
+          document.getElementById("frontRawY").innerText = data.frontRaw.y || 0;
+          document.getElementById("backRawX").innerText = data.backRaw.x || 0;
+          document.getElementById("backRawY").innerText = data.backRaw.y || 0;
+        }
+        if (data.frontFiltered && data.backFiltered) {
+          document.getElementById("frontFiltX").innerText = data.frontFiltered.x || 0;
+          document.getElementById("frontFiltY").innerText = data.frontFiltered.y || 0;
+          document.getElementById("backFiltX").innerText = data.backFiltered.x || 0;
+          document.getElementById("backFiltY").innerText = data.backFiltered.y || 0;
+        }
+        if (data.status) {
+          document.getElementById("frontStatus").innerText = data.status.front;
+          document.getElementById("backStatus").innerText = data.status.back;
+        }
       })
       .catch(err => console.log("VIVE data error:", err));
   }
 
   setInterval(updateViveData, 1000);
+
+  // 参数调整面板切换
+  const paramToggle = document.getElementById("paramToggle");
+  const paramPanel = document.getElementById("paramPanel");
+  paramToggle.onclick = () => {
+    if (paramPanel.style.display === "none") {
+      paramPanel.style.display = "block";
+      paramToggle.innerText = "收起";
+    } else {
+      paramPanel.style.display = "none";
+      paramToggle.innerText = "展开";
+    }
+  };
+
+  // 参数滑块初始化
+  const paramSliders = {
+    "FRONT_TURN_TH": { slider: document.getElementById("frontTurnTh"), val: document.getElementById("frontTurnThVal") },
+    "FRONT_BACKUP_TH": { slider: document.getElementById("frontBackupTh"), val: document.getElementById("frontBackupThVal") },
+    "WALL_TOO_CLOSE": { slider: document.getElementById("wallTooClose"), val: document.getElementById("wallTooCloseVal") },
+    "WALL_IDEAL": { slider: document.getElementById("wallIdeal"), val: document.getElementById("wallIdealVal") },
+    "WALL_TOO_FAR": { slider: document.getElementById("wallTooFar"), val: document.getElementById("wallTooFarVal") },
+    "RIGHT_LOST_WALL": { slider: document.getElementById("rightLostWall"), val: document.getElementById("rightLostWallVal") },
+    "SPEED_FWD": { slider: document.getElementById("speedFwd"), val: document.getElementById("speedFwdVal") },
+    "SPEED_BACK": { slider: document.getElementById("speedBack"), val: document.getElementById("speedBackVal") },
+    "TURN_SPIN": { slider: document.getElementById("turnSpin"), val: document.getElementById("turnSpinVal") },
+    "TURN_CORRECT": { slider: document.getElementById("turnCorrect"), val: document.getElementById("turnCorrectVal") },
+    "TURN_GENTLE": { slider: document.getElementById("turnGentle"), val: document.getElementById("turnGentleVal") },
+    "TURN_HARD_FIND": { slider: document.getElementById("turnHardFind"), val: document.getElementById("turnHardFindVal") },
+    "TURN_TINY": { slider: document.getElementById("turnTiny"), val: document.getElementById("turnTinyVal") }
+  };
+
+  // 初始化所有参数滑块
+  for (const [paramName, obj] of Object.entries(paramSliders)) {
+    if (obj.slider && obj.val) {
+      updateSliderBackground(obj.slider);
+      obj.slider.oninput = function() {
+        const value = parseFloat(this.value);
+        obj.val.innerText = value;
+        updateSliderBackground(this);
+        // 实时发送参数更新
+        sendCommand("PARAM:" + paramName + "=" + value);
+      };
+    }
+  }
 </script>
 </body>
 </html>

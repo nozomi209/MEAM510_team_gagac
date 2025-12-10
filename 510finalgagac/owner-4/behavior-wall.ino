@@ -7,45 +7,74 @@
 // 检查传感器读数是否有效
 static bool isValid(uint16_t d) { return (d > 1 && d < 3000); }
 
-// ============ 参数设置 ============
-const uint16_t FRONT_TURN_TH   = 250;   // 前方避障距离 (17cm)
-const uint16_t FRONT_BACKUP_TH = 50;    // 紧急倒车距离 (5cm)
+// ============ 参数设置 (可实时调整) ============
+// 前方避障参数
+uint16_t FRONT_TURN_TH   = 250;   // 前方避障距离 (17cm)
+uint16_t FRONT_BACKUP_TH = 50;    // 紧急倒车距离 (5cm)
 
 // 巡墙距离参数
-const float WALL_TOO_CLOSE      = 50.0f;  // <6cm: 太近 (危险)
-const float WALL_IDEAL          = 80.0f;  // 9cm: 理想距离
-const float WALL_TOO_FAR        = 120.0f; // >13cm: 太远
-const float RIGHT_LOST_WALL     = 200.0f; // >20cm: 认为出胡同或丢墙
+float WALL_TOO_CLOSE      = 50.0f;  // <6cm: 太近 (危险)
+float WALL_IDEAL          = 80.0f;  // 9cm: 理想距离
+float WALL_TOO_FAR        = 120.0f; // >13cm: 太远
+float RIGHT_LOST_WALL     = 200.0f; // >20cm: 认为出胡同或丢墙
 
 // 速度参数
-const uint8_t SPEED_FWD        = 50;    // 前进速度
-const uint8_t SPEED_BACK       = 25;    // 倒车速度
+uint8_t SPEED_FWD        = 50;    // 前进速度
+uint8_t SPEED_BACK       = 25;    // 倒车速度
 
 // 转向力度参数
-const uint8_t TURN_SPIN        = 120;   // 原地旋转力度 (前方避障)
-const uint8_t TURN_CORRECT     = 12;    // 左转修正 (离墙太近)
-const uint8_t TURN_GENTLE      = 12;    // 右转找墙 (离墙太远)
-const uint8_t TURN_HARD_FIND   = 120;   // 强力找墙 (出胡同)
-const uint8_t TURN_TINY        = 10;    // 微调 (保持平行)
+uint8_t TURN_SPIN        = 120;   // 原地旋转力度 (前方避障)
+uint8_t TURN_CORRECT     = 12;    // 左转修正 (离墙太近)
+uint8_t TURN_GENTLE      = 12;    // 右转找墙 (离墙太远)
+uint8_t TURN_HARD_FIND   = 120;   // 强力找墙 (出胡同)
+uint8_t TURN_TINY        = 10;    // 微调 (保持平行)
 
 // 卡死检测参数
-const unsigned long STALL_CHECK_TIME = 2000; // 每2秒检查一次是否卡死
-const int STALL_MOVE_TH = 20; // 2秒内移动小于20mm视为卡死
+unsigned long STALL_CHECK_TIME = 2000; // 每2秒检查一次是否卡死
+int STALL_MOVE_TH = 20; // 2秒内移动小于20mm视为卡死
 
 // 动作序列时间 (毫秒)
-const unsigned long MAX_BACKUP_MS = 600; 
-const unsigned long SEQ_EXIT_STRAIGHT_MS =6; // 出胡同: 先直行
-const unsigned long SEQ_EXIT_TURN_MS     = 100; // 出胡同: 再强转
-const unsigned long SEQ_EXIT_STOP_MS     = 100; // 出胡同: 后停车
+unsigned long MAX_BACKUP_MS = 600; 
+unsigned long SEQ_EXIT_STRAIGHT_MS = 6; // 出胡同: 先直行
+unsigned long SEQ_EXIT_TURN_MS     = 100; // 出胡同: 再强转
+unsigned long SEQ_EXIT_STOP_MS     = 100; // 出胡同: 后停车
 
 // 前方避障序列 (停 -> 转 -> 停)
-const unsigned long SEQ_FRONT_PRE_STOP_MS  = 100; 
-const unsigned long SEQ_FRONT_TURN_MS      = 200; 
-const unsigned long SEQ_FRONT_POST_STOP_MS = 100; 
+unsigned long SEQ_FRONT_PRE_STOP_MS  = 100; 
+unsigned long SEQ_FRONT_TURN_MS      = 200; 
+unsigned long SEQ_FRONT_POST_STOP_MS = 100; 
 
 // 脱困序列 (倒车 -> 旋转)
-const unsigned long SEQ_STUCK_BACK_MS = 800;  
-const unsigned long SEQ_STUCK_TURN_MS = 100;
+unsigned long SEQ_STUCK_BACK_MS = 800;  
+unsigned long SEQ_STUCK_TURN_MS = 100;
+
+// 参数更新函数（从UART接收参数）
+void updateWallParam(const String& paramName, float value) {
+    if (paramName == "FRONT_TURN_TH") FRONT_TURN_TH = (uint16_t)value;
+    else if (paramName == "FRONT_BACKUP_TH") FRONT_BACKUP_TH = (uint16_t)value;
+    else if (paramName == "WALL_TOO_CLOSE") WALL_TOO_CLOSE = value;
+    else if (paramName == "WALL_IDEAL") WALL_IDEAL = value;
+    else if (paramName == "WALL_TOO_FAR") WALL_TOO_FAR = value;
+    else if (paramName == "RIGHT_LOST_WALL") RIGHT_LOST_WALL = value;
+    else if (paramName == "SPEED_FWD") SPEED_FWD = (uint8_t)value;
+    else if (paramName == "SPEED_BACK") SPEED_BACK = (uint8_t)value;
+    else if (paramName == "TURN_SPIN") TURN_SPIN = (uint8_t)value;
+    else if (paramName == "TURN_CORRECT") TURN_CORRECT = (uint8_t)value;
+    else if (paramName == "TURN_GENTLE") TURN_GENTLE = (uint8_t)value;
+    else if (paramName == "TURN_HARD_FIND") TURN_HARD_FIND = (uint8_t)value;
+    else if (paramName == "TURN_TINY") TURN_TINY = (uint8_t)value;
+    else if (paramName == "STALL_CHECK_TIME") STALL_CHECK_TIME = (unsigned long)value;
+    else if (paramName == "STALL_MOVE_TH") STALL_MOVE_TH = (int)value;
+    else if (paramName == "MAX_BACKUP_MS") MAX_BACKUP_MS = (unsigned long)value;
+    else if (paramName == "SEQ_EXIT_STRAIGHT_MS") SEQ_EXIT_STRAIGHT_MS = (unsigned long)value;
+    else if (paramName == "SEQ_EXIT_TURN_MS") SEQ_EXIT_TURN_MS = (unsigned long)value;
+    else if (paramName == "SEQ_EXIT_STOP_MS") SEQ_EXIT_STOP_MS = (unsigned long)value;
+    else if (paramName == "SEQ_FRONT_PRE_STOP_MS") SEQ_FRONT_PRE_STOP_MS = (unsigned long)value;
+    else if (paramName == "SEQ_FRONT_TURN_MS") SEQ_FRONT_TURN_MS = (unsigned long)value;
+    else if (paramName == "SEQ_FRONT_POST_STOP_MS") SEQ_FRONT_POST_STOP_MS = (unsigned long)value;
+    else if (paramName == "SEQ_STUCK_BACK_MS") SEQ_STUCK_BACK_MS = (unsigned long)value;
+    else if (paramName == "SEQ_STUCK_TURN_MS") SEQ_STUCK_TURN_MS = (unsigned long)value;
+}
 
 String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     // 状态记录变量

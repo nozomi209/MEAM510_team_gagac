@@ -44,8 +44,8 @@ void setup() {
   
   ToF_init();
 
-  // Owner RX=6, TX=7
-  ServantSerial.begin(115200, SERIAL_8N1, 6, 7);
+  // Owner RX=GPIO17, TX=GPIO18 （与 Servant 交叉连接）
+  ServantSerial.begin(115200, SERIAL_8N1, 17, 18);
   Serial.println("UART to servant ready. Waiting for Start...");
 }
 
@@ -63,6 +63,17 @@ void loop() {
       isAutoRunning = false;
       sendToServant("S"); // 立刻停车
       Serial.println(">>> AUTO MODE STOPPED <<<");
+    }
+    // 处理参数更新命令: PARAM:参数名=值
+    else if (webCmd.startsWith("PARAM:")) {
+      String paramStr = webCmd.substring(6); // 去掉"PARAM:"
+      int eqPos = paramStr.indexOf('=');
+      if (eqPos > 0) {
+        String paramName = paramStr.substring(0, eqPos);
+        float paramValue = paramStr.substring(eqPos + 1).toFloat();
+        updateWallParam(paramName, paramValue);
+        Serial.printf(">>> 参数更新: %s = %.2f\n", paramName.c_str(), paramValue);
+      }
     }
   }
 
