@@ -1,4 +1,4 @@
-//昨晚最新版
+//昨晚最新版,有改系数
 // behavior-wall.ino
 // 右侧巡墙逻辑 (Right Wall Following)
 
@@ -22,7 +22,7 @@ const uint8_t SPEED_FWD        = 50;    // 前进速度
 const uint8_t SPEED_BACK       = 25;    // 倒车速度
 
 // 转向力度参数
-const uint8_t TURN_SPIN        = 105;   // 原地旋转力度 (前方避障)
+const uint8_t TURN_SPIN        = 120;   // 原地旋转力度 (前方避障)
 const uint8_t TURN_CORRECT     = 12;    // 左转修正 (离墙太近)
 const uint8_t TURN_GENTLE      = 12;    // 右转找墙 (离墙太远)
 const uint8_t TURN_HARD_FIND   = 120;   // 强力找墙 (出胡同)
@@ -35,17 +35,17 @@ const int STALL_MOVE_TH = 20; // 2秒内移动小于20mm视为卡死
 // 动作序列时间 (毫秒)
 const unsigned long MAX_BACKUP_MS = 600; 
 const unsigned long SEQ_EXIT_STRAIGHT_MS =6; // 出胡同: 先直行
-const unsigned long SEQ_EXIT_TURN_MS     = 300; // 出胡同: 再强转
+const unsigned long SEQ_EXIT_TURN_MS     = 100; // 出胡同: 再强转
 const unsigned long SEQ_EXIT_STOP_MS     = 100; // 出胡同: 后停车
 
 // 前方避障序列 (停 -> 转 -> 停)
 const unsigned long SEQ_FRONT_PRE_STOP_MS  = 100; 
-const unsigned long SEQ_FRONT_TURN_MS      = 300; 
+const unsigned long SEQ_FRONT_TURN_MS      = 200; 
 const unsigned long SEQ_FRONT_POST_STOP_MS = 100; 
 
 // 脱困序列 (倒车 -> 旋转)
 const unsigned long SEQ_STUCK_BACK_MS = 800;  
-const unsigned long SEQ_STUCK_TURN_MS = 500;
+const unsigned long SEQ_STUCK_TURN_MS = 100;
 
 String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     // 状态记录变量
@@ -125,7 +125,7 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     } else { isBackingUp = false; }
 
     // 1. 前方避障序列 (停 -> 盲转 -> 停)
-    if (F <= FRONT_TURN_TH && R1<= 130.0F || isFrontTurnSequenceActive) { ////要改这里！！！！
+    if (F <= FRONT_TURN_TH && R1<= 120.0F || isFrontTurnSequenceActive) { ////要改这里！！！！
         if (!isFrontTurnSequenceActive) { isFrontTurnSequenceActive = true; frontSeqStage = 1; stageStartTime = millis(); }
         unsigned long dt = millis() - stageStartTime;
 
@@ -145,6 +145,11 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
             else { isFrontTurnSequenceActive = false; frontSeqStage = 0; }
         }
         return "S";
+    }
+
+
+    if (F <= FRONT_TURN_TH && R1> 120.0F || isFrontTurnSequenceActive) {
+        return "R" + String(TURN_HARD_FIND);
     }
 
     // 2. 出胡同序列 (防撞角: 直行 -> 猛拐 -> 停)
