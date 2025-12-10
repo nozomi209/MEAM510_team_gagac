@@ -26,8 +26,13 @@ HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 #define ENCODER_R_B   1
 
 // VIVE Tracker pins
-#define VIVE_PIN_FRONT  15  // 我改掉了，本来是18 19 冲突了Front VIVE tracker
-#define VIVE_PIN_BACK   16  // Back VIVE tracker
+// 注意：两个tracker都安装在车后部分的两边（左右排列）
+#define VIVE_PIN_FRONT  15  // 跟踪器1：车后左边 VIVE tracker (GPIO15)
+#define VIVE_PIN_BACK   16  // 跟踪器2：车后右边 VIVE tracker (GPIO16)
+
+// 角度计算偏移量（根据实际测试调整）
+// 如果计算出的角度方向不对，可以尝试改为 -90.0 或其他值
+#define VIVE_ANGLE_OFFSET  90.0
 
 //PWM setup
 #define PWM_FREQ      700
@@ -411,7 +416,7 @@ void setup() {
     delay(1000);
 
     //来自 owner 的 UART
-    OwnerSerial.begin(115200, SERIAL_8N1, 18, 17);
+    OwnerSerial.begin(115200, SERIAL_8N1, 6, 7);
     Serial.println("UART from owner ready");
     
     WiFi.mode(WIFI_AP);
@@ -554,11 +559,12 @@ void setup() {
     Serial.println();
     
     // Initialize VIVE trackers
+    // 两个tracker安装在车后部分的两边（左右排列）
     viveFront.initialize();
     viveBack.initialize();
     Serial.println("VIVE Tracking initialized");
-    Serial.printf("   Front tracker: GPIO%d\n", VIVE_PIN_FRONT);
-    Serial.printf("   Back tracker: GPIO%d\n", VIVE_PIN_BACK);
+    Serial.printf("   跟踪器1 (车后左边): GPIO%d\n", VIVE_PIN_FRONT);
+    Serial.printf("   跟踪器2 (车后右边): GPIO%d\n", VIVE_PIN_BACK);
     
     // Synchronize with base stations
     //Serial.println("Synchronizing VIVE trackers...");
@@ -591,14 +597,23 @@ void loop() {
         processViveData(viveFront, viveXFront, viveYFront);
         processViveData(viveBack, viveXBack, viveYBack);
         
-        // Calculate center position (average of front and back)
+        // Calculate center position (average of two trackers at back of vehicle)
+        // 两个tracker在车后两边，计算它们连线的中点作为中心位置
         viveX = (float(viveXFront) + float(viveXBack)) / 2.0;
         viveY = (float(viveYFront) + float(viveYBack)) / 2.0;
         
-        // Calculate orientation angle from front and back positions
-        float deltaX = float(viveXBack) - float(viveXFront);
-        float deltaY = float(viveYBack) - float(viveYFront);
-        viveAngle = (180.0 / PI) * fastAtan2(deltaY, deltaX) + 90.0;
+        // Calculate orientation angle from two tracker positions
+        // 两个tracker在车后左右排列：
+        // - tracker1（viveFront/GPIO15）在车后左边
+        // - tracker2（viveBack/GPIO16）在车后右边
+        // 连线方向：从左边tracker指向右边tracker（从左到右）
+        // 车辆前进方向：垂直于连线方向（向前或向后，取决于定义）
+        float deltaX = float(viveXBack) - float(viveXFront);  // 从左边到右边的X方向
+        float deltaY = float(viveYBack) - float(viveYFront);  // 从左边到右边的Y方向
+        // atan2(deltaY, deltaX) 给出连线方向的角度（从左指向右）
+        // VIVE_ANGLE_OFFSET 表示车辆前进方向相对于连线方向的偏移
+        // 如果角度方向不对，可以调整 VIVE_ANGLE_OFFSET 的值（如改为 -90.0）
+        viveAngle = (180.0 / PI) * fastAtan2(deltaY, deltaX) + VIVE_ANGLE_OFFSET;
         
         // Normalize angle to -180 to 180 range
         if (viveAngle > 180.0) {
@@ -652,8 +667,8 @@ void loop() {
             Serial.println("───────────────────────────────────────");
             Serial.printf("系统激活: %s\n", isViveActive ? "是" : "否");
             Serial.printf("测试模式: %s\n", isViveTestMode ? "是" : "否");
-            Serial.printf("前跟踪器状态: %d (0=无信号, 1=仅同步, 2=接收中)\n", viveFront.getStatus());
-            Serial.printf("后跟踪器状态: %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
+            Serial.printf("跟踪器1状态 (车后左边): %d (0=无信号, 1=仅同步, 2=接收中)\n", viveFront.getStatus());
+            Serial.printf("跟踪器2状态 (车后右边): %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
             Serial.printf("当前坐标: X=%.2f, Y=%.2f\n", viveX, viveY);
             Serial.printf("当前角度: %.2f°\n", viveAngle);
             Serial.println("═══════════════════════════════════════");
@@ -705,18 +720,18 @@ void loop() {
             Serial.println("═══════════════════════════════════════");
             Serial.printf("📍 VIVE 测试数据 [%lu ms]\n", millis());
             Serial.println("───────────────────────────────────────");
-            Serial.printf("前跟踪器 (Front):\n");
+            Serial.printf("跟踪器1 (车后左边, GPIO15):\n");
             Serial.printf("  原始坐标: X=%d, Y=%d\n", rawXFront, rawYFront);
             Serial.printf("  滤波后:   X=%d, Y=%d\n", viveXFront, viveYFront);
             Serial.printf("  状态:     %d (0=无信号, 1=仅同步, 2=接收中)\n", viveFront.getStatus());
-            Serial.printf("后跟踪器 (Back):\n");
+            Serial.printf("跟踪器2 (车后右边, GPIO16):\n");
             Serial.printf("  原始坐标: X=%d, Y=%d\n", rawXBack, rawYBack);
             Serial.printf("  滤波后:   X=%d, Y=%d\n", viveXBack, viveYBack);
             Serial.printf("  状态:     %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
             Serial.println("───────────────────────────────────────");
             Serial.printf("中心位置: X=%.2f, Y=%.2f\n", viveX, viveY);
             Serial.printf("朝向角度: %.2f°\n", viveAngle);
-            Serial.printf("前后距离: %.2f (用于验证)\n", 
+            Serial.printf("左右距离: %.2f (用于验证，应接近车后部宽度)\n", 
                          sqrt(pow(viveXBack - viveXFront, 2) + pow(viveYBack - viveYFront, 2)));
             Serial.println("═══════════════════════════════════════\n");
         }

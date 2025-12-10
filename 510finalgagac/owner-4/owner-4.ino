@@ -44,8 +44,8 @@ void setup() {
   
   ToF_init();
 
-  // Owner RX=18, TX=17
-  ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
+  // Owner RX=6, TX=7
+  ServantSerial.begin(115200, SERIAL_8N1, 6, 7);
   Serial.println("UART to servant ready. Waiting for Start...");
 }
 
