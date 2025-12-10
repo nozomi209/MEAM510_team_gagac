@@ -291,7 +291,7 @@ void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
     
-    targetSpeedL = 1.07*targetRPM; //给左轮加一点
+    targetSpeedL = 0.996* targetRPM; //给左轮 - 一点
     targetSpeedR = targetRPM;
 }
 

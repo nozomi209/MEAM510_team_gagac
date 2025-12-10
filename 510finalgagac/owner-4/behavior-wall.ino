@@ -1,170 +1,209 @@
+//昨晚最新版
 // behavior-wall.ino
-// wall following logic (右侧巡墙逻辑)
+// 右侧巡墙逻辑 (Right Wall Following)
 
 #include <Arduino.h>
 
-// 检查传感器读数是否有效 (过滤掉 0 或 异常大的噪音)
-static bool isValid(uint16_t d) {
-    return (d > 1 && d < 3000);
-}
+// 检查传感器读数是否有效
+static bool isValid(uint16_t d) { return (d > 1 && d < 3000); }
 
+// ============ 参数设置 ============
+const uint16_t FRONT_TURN_TH   = 250;   // 前方避障距离 (17cm)
+const uint16_t FRONT_BACKUP_TH = 50;    // 紧急倒车距离 (5cm)
 
+// 巡墙距离参数
+const float WALL_TOO_CLOSE      = 50.0f;  // <6cm: 太近 (危险)
+const float WALL_IDEAL          = 80.0f;  // 9cm: 理想距离
+const float WALL_TOO_FAR        = 120.0f; // >13cm: 太远
+const float RIGHT_LOST_WALL     = 200.0f; // >20cm: 认为出胡同或丢墙
 
-// 1. Distance Thresholds (距离阈值设置)
-const uint16_t FRONT_TURN_TH   = 220;   // 前方遇到障碍的阈值 (22cm)，小于这个距离就开始左转
-const uint16_t FRONT_BACKUP_TH = 30;    // [紧急] 贴脸阈值 (3cm)，小于这个距离说明快撞上了，必须倒车
-
-// Simplified Wall Following Thresholds (巡墙距离参数)
-const float WALL_TOO_CLOSE      = 50.0f;  // < 5cm: 危险距离！必须立刻左转远离
-const float WALL_IDEAL          = 90.0f;  // 理想距离 (9cm)
-const float WALL_TOO_FAR        = 130.0f; // > 13cm: 太远了，需要往右靠
-
-const float RIGHT_LOST_WALL     = 200.0f; // 超过 20cm 认为墙没了 (或者出胡同了)
-
-// 2. Speed and Turn Strength (速度与转向力度)
-const uint8_t SPEED_FWD        = 30;    // 前进基础速度
+// 速度参数
+const uint8_t SPEED_FWD        = 50;    // 前进速度
 const uint8_t SPEED_BACK       = 25;    // 倒车速度
 
-const uint8_t TURN_SPIN        = 102;   // 原地左转力度 (用于前方避障)
-const uint8_t TURN_CORRECT     = 30;    // 左转修正力度 
-const uint8_t TURN_GENTLE      = 27;    // 右转找墙力度 (离远了慢慢靠过去)
-const uint8_t TURN_HARD_FIND   = 110;   // [猛烈] 出胡同时的强力右转力度
+// 转向力度参数
+const uint8_t TURN_SPIN        = 105;   // 原地旋转力度 (前方避障)
+const uint8_t TURN_CORRECT     = 12;    // 左转修正 (离墙太近)
+const uint8_t TURN_GENTLE      = 12;    // 右转找墙 (离墙太远)
+const uint8_t TURN_HARD_FIND   = 120;   // 强力找墙 (出胡同)
+const uint8_t TURN_TINY        = 10;    // 微调 (保持平行)
 
-const uint8_t TURN_TINY        = 10;    // 微调力度
-const float ANGLE_ERR_TH       = 8.0f;  // 角度误差容忍度 (降低敏感度，防止画龙)
+// 卡死检测参数
+const unsigned long STALL_CHECK_TIME = 2000; // 每2秒检查一次是否卡死
+const int STALL_MOVE_TH = 20; // 2秒内移动小于20mm视为卡死
 
-// Time Limits (时间限制)
-const unsigned long MAX_BACKUP_MS = 600; // 倒车最长时间 (0.6秒)，防止一直倒撞到后面
+// 动作序列时间 (毫秒)
+const unsigned long MAX_BACKUP_MS = 600; 
+const unsigned long SEQ_EXIT_STRAIGHT_MS =6; // 出胡同: 先直行
+const unsigned long SEQ_EXIT_TURN_MS     = 300; // 出胡同: 再强转
+const unsigned long SEQ_EXIT_STOP_MS     = 100; // 出胡同: 后停车
 
-// Sequences (固定动作序列的时间设置 - 毫秒)
-// 出胡同序列:
-const unsigned long SEQ_EXIT_STRAIGHT_MS = 300; // 第一步: 强制直行 300ms (把车身带出来，防刮蹭)
-const unsigned long SEQ_EXIT_TURN_MS     = 400; // 第二步: 强力右转 400ms (盲转找墙)
-const unsigned long SEQ_EXIT_STOP_MS     = 600; // 第三步: 停车观察 400ms (消除惯性)
-// 前方避障序列:
-const unsigned long SEQ_FRONT_TURN_MS    = 600; // 遇到前墙: 闭眼左转 600ms
-const unsigned long SEQ_FRONT_STOP_MS    = 450; // 转完后: 停车冷静 300ms
+// 前方避障序列 (停 -> 转 -> 停)
+const unsigned long SEQ_FRONT_PRE_STOP_MS  = 100; 
+const unsigned long SEQ_FRONT_TURN_MS      = 300; 
+const unsigned long SEQ_FRONT_POST_STOP_MS = 100; 
+
+// 脱困序列 (倒车 -> 旋转)
+const unsigned long SEQ_STUCK_BACK_MS = 800;  
+const unsigned long SEQ_STUCK_TURN_MS = 500;
 
 String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
-    // 静态变量 (Static Variables) - 用于记住上一轮循环的状态
+    // 状态记录变量
     static unsigned long backupStartTime = 0;
-    static bool isBackingUp = false;           // 是否正在倒车
+    static bool isBackingUp = false;           
     static unsigned long exitStartTime = 0;
-    static bool isExitingSequenceActive = false; // 是否正在执行"出胡同"序列
-    static unsigned long frontTurnStartTime = 0;
-    static bool isFrontTurnSequenceActive = false; // 是否正在执行"前方避障"序列
+    static bool isExitingSequenceActive = false; 
 
-    // 检查传感器状态
+    // 前方避障变量
+    static bool isFrontTurnSequenceActive = false; 
+    static uint8_t frontSeqStage = 0; 
+    static unsigned long stageStartTime = 0;
+
+    // 卡死检测变量
+    static unsigned long lastStallCheckTime = 0;
+    static uint16_t lastF = 0, lastR1 = 0;
+    static bool isStuckSequenceActive = false;
+    static unsigned long stuckStartTime = 0;
+
+    // 1. 数据预处理
     bool hasF  = isValid(F_raw);
     bool hasR1 = isValid(R1_raw);
     bool hasR2 = isValid(R2_raw);
 
-    // Startup protection (启动保护)
-    // 如果三个传感器都读不到数 (比如刚开机)，原地不动，防止瞎跑
-    if (!hasF && !hasR1 && !hasR2) { return "S"; }
+    if (!hasF && !hasR1 && !hasR2) { return "S"; } // 启动保护: 全无数据则停车
 
-    // 数据清洗: 如果读数无效，设为 5000 (无穷远)
     float F  = (hasF && F_raw < 5000) ? F_raw : 5000.0f;
     float R1 = hasR1 ? R1_raw : 5000.0f;
     float R2 = hasR2 ? R2_raw : 5000.0f; 
-
-    // 判断车头是否已经探出墙外 (R1 读数很大)
     bool isHeadOut = (R1 > RIGHT_LOST_WALL); 
 
-    // ================= LOGIC CORE (逻辑核心) =================
 
-    // 0. PANIC BACKUP (紧急倒车)
-    // 只有在真的快撞上 (>3cm) 时才触发
+    // ================= [优先级 1] 卡死脱困序列 (倒车 -> 旋转) =================
+    // 触发后强制执行，用于从障碍物中拔出来
+    if (isStuckSequenceActive) {
+        unsigned long dt = millis() - stuckStartTime;
+        if (dt < SEQ_STUCK_BACK_MS) { return "B" + String(SPEED_BACK + 10); } // 强力倒车
+        else if (dt < (SEQ_STUCK_BACK_MS + SEQ_STUCK_TURN_MS)) { return "L" + String(TURN_SPIN); } // 换个方向
+        else { 
+            isStuckSequenceActive = false; 
+            lastStallCheckTime = millis(); 
+            lastF = F; lastR1 = R1;
+        }
+        return "B" + String(SPEED_BACK);
+    }
+
+    // ================= [逻辑核心] 卡死检测 =================
+    if (millis() - lastStallCheckTime > STALL_CHECK_TIME) {
+        int deltaF = abs((int)F - (int)lastF);
+        bool isBusy = (isFrontTurnSequenceActive || isExitingSequenceActive || isBackingUp);
+        
+        // 如果2秒内没怎么动 (delta < 2cm) 且没在执行其他任务
+        if (!isBusy && deltaF < STALL_MOVE_TH) {
+            // 判定为卡死，触发脱困序列 (倒车)
+            isStuckSequenceActive = true;
+            stuckStartTime = millis();
+            return "B" + String(SPEED_BACK); 
+        }
+        // 更新历史位置
+        lastF = F; lastR1 = R1;
+        lastStallCheckTime = millis();
+    }
+
+    // ================= [优先级 2] 常规动作 =================
+
+    // 0. 贴脸保护 (距离 < 5cm)
     if (F < FRONT_BACKUP_TH) {
         if (!isBackingUp) { isBackingUp = true; backupStartTime = millis(); }
-        // 倒车超时保护: 如果倒了 600ms 还没退出来，强制左转 (赌一把)
         if (millis() - backupStartTime > MAX_BACKUP_MS) { 
+            // 倒车超时 -> 强制转弯序列
             isFrontTurnSequenceActive = true; 
-            frontTurnStartTime = millis();
-            return "L" + String(TURN_SPIN); 
+            frontSeqStage = 1; 
+            stageStartTime = millis();
+            return "S"; 
         }
         return "B" + String(SPEED_BACK);
     } else { isBackingUp = false; }
 
-    // 1. FRONT TURN SEQUENCE (前方避障序列)
-    // 触发条件: 前方 < 22cm 或者 序列已经被激活
-    if (F <= FRONT_TURN_TH || isFrontTurnSequenceActive) {
-        if (!isFrontTurnSequenceActive) { isFrontTurnSequenceActive = true; frontTurnStartTime = millis(); }
-        unsigned long dt = millis() - frontTurnStartTime;
-        
-        // 阶段A: 闭眼左转 (避免传感器盲区导致转过头)
-        if (dt < SEQ_FRONT_TURN_MS) { return "L" + String(TURN_SPIN); }
-        // 阶段B: 停车冷静 (让传感器数据稳定)
-        else if (dt < (SEQ_FRONT_TURN_MS + SEQ_FRONT_STOP_MS)) { return "S"; }
-        // 阶段C: 序列结束
-        else { isFrontTurnSequenceActive = false; }
-        
-        if (isFrontTurnSequenceActive) return "L" + String(TURN_SPIN);
+    // 1. 前方避障序列 (停 -> 盲转 -> 停)
+    if (F <= FRONT_TURN_TH && R1<= 130.0F || isFrontTurnSequenceActive) { ////要改这里！！！！
+        if (!isFrontTurnSequenceActive) { isFrontTurnSequenceActive = true; frontSeqStage = 1; stageStartTime = millis(); }
+        unsigned long dt = millis() - stageStartTime;
+
+        // 阶段1: 停车稳住
+        if (frontSeqStage == 1) {
+            if (dt < SEQ_FRONT_PRE_STOP_MS) return "S"; 
+            else { frontSeqStage = 2; stageStartTime = millis(); return "L" + String(TURN_SPIN); }
+        }
+        // 阶段2: 闭眼转弯
+        if (frontSeqStage == 2) {
+            if (dt < SEQ_FRONT_TURN_MS) return "L" + String(TURN_SPIN);
+            else { frontSeqStage = 3; stageStartTime = millis(); return "S"; }
+        }
+        // 阶段3: 转后观察
+        if (frontSeqStage == 3) {
+            if (dt < SEQ_FRONT_POST_STOP_MS) return "S"; 
+            else { isFrontTurnSequenceActive = false; frontSeqStage = 0; }
+        }
+        return "S";
     }
 
-    // 2. EXIT ALLEY SEQUENCE (出胡同序列)
-    // 触发条件: 车头出去了(R1空) 并且 屁股还在(R2有) -> 说明正在出弯
+    // 2. 出胡同序列 (防撞角: 直行 -> 猛拐 -> 停)
     if ((isHeadOut && R2 <= RIGHT_LOST_WALL) || isExitingSequenceActive) {
-        if (!isHeadOut && !isExitingSequenceActive) { /* 误判过滤，忽略 */ }
+        if (!isHeadOut && !isExitingSequenceActive) { }
         else {
             if (!isExitingSequenceActive) { isExitingSequenceActive = true; exitStartTime = millis(); }
             unsigned long dt = millis() - exitStartTime;
-            
-            // 阶段A: 强制直行 300ms (防止车身侧面刮到墙角)
             if (dt < SEQ_EXIT_STRAIGHT_MS) { return "F" + String(SPEED_FWD); }
-            // 阶段B: 猛烈右转 400ms (因为已经直行了一段，现在要猛拐去抓新墙)
             else if (dt < (SEQ_EXIT_STRAIGHT_MS + SEQ_EXIT_TURN_MS)) { return "R" + String(TURN_HARD_FIND); }
-            // 阶段C: 停车 400ms (消除惯性)
             else if (dt < (SEQ_EXIT_STRAIGHT_MS + SEQ_EXIT_TURN_MS + SEQ_EXIT_STOP_MS)) { return "S"; }
-            // 阶段D: 结束
             else { isExitingSequenceActive = false; }
-            
             if (isExitingSequenceActive) return "F" + String(SPEED_FWD);
         }
     }
 
-    // ========================================================
-    // 3. SIMPLIFIED WALL FOLLOWING (简化版巡墙逻辑 - 安全优先)
-    // ========================================================
-    // 只有在车头还在墙里时 (没出胡同)，才执行此逻辑
+    // 3. 常规巡墙 (简化版: R1主导，R2辅助)
     if (!isHeadOut) {
-        // PRIORITY 1: SAFETY (安全第一)
-        // 如果距离小于 5cm，不管角度如何，必须立刻左转远离！
-        if (R1 < WALL_TOO_CLOSE) {
-            return "L" + String(TURN_CORRECT);
+        float diff = R1 - R2;
+        
+        // [特殊保护] 刚转过直角弯，车尾(R2)还在后面很远，diff 是负的大数
+        // 此时强制直行，防止误判为"车头扎墙"
+        if (diff < -100.0f) { return "F" + String(SPEED_FWD); }
+
+        // ============ 第一层：只看 R1 (距离控制) ============
+        
+        // 1. 太近了 (R1 < 6cm) -> 必须左转远离 (保命)
+        if (R1 < WALL_TOO_CLOSE) { 
+            return "L" + String(TURN_CORRECT); 
         }
 
-        // PRIORITY 2: ALIGNMENT (车头扎进去了)
-        // 如果 车头距离(R1) < 车尾距离(R2)，说明车正在往墙上撞
-        // 必须立刻左转回正
-        if (R1 < R2 - 5.0f) { // 5mm 缓冲
-            return "L" + String(TURN_CORRECT);
+        // 2. 太远了 (R1 > 13cm) -> 必须右转去找墙 (防丢)
+        if (R1 > WALL_TOO_FAR) { 
+            return "R" + String(TURN_GENTLE); 
         }
 
-        // PRIORITY 3: TOO FAR (离太远了)
-        // 只有在安全的情况下 (>5cm 且 车头没扎墙)，才考虑拉近距离
-        if (R1 > WALL_TOO_FAR) {
-            return "R" + String(TURN_GENTLE);
+        // ============ 第二层：只看 R1 vs R2 (平行控制) ============
+        // 能走到这里，说明 R1 距离适中 (在 6cm ~ 13cm 之间)，很安全
+        // 这时候我们才用 R2 来微调车身姿态
+        
+        // 3. 车头扎向墙 (R1 比 R2 小，说明车头歪进去了)
+        // 稍微左转一点点回正
+        if (diff < -5.0f) { 
+            return "L" + String(TURN_TINY); 
         }
 
-        // PRIORITY 4: NOSE POINTING OUT (车头朝外)
-        // 车头距离 > 车尾距离，说明车正在远离墙，微调右转保持平行
-        if (R1 > R2 + 5.0f) {
-            return "R" + String(TURN_TINY);
+        // 4. 车头撇向外 (R1 比 R2 大，说明车头歪出去了)
+        // 稍微右转一点点回正
+        if (diff > 5.0f) { 
+            return "R" + String(TURN_TINY); 
         }
-
-        // PRIORITY 5: TINY ADJUSTMENTS (微调)
-        // 保持绝对直线行驶
-        float angle = R1 - R2;
-        if (angle < -3.0f) return "L" + String(TURN_TINY); // 稍微向里偏了，修一点
-        // 移除了向外偏的微调，防止震荡撞墙
+        
+        // 5. 既不近也不远，而且是平行的 -> 完美，直行
+        return "F" + String(SPEED_FWD);
     }
-    else {
-        // Head is out (车头在空地)
-        // 上面的序列没触发，说明前后都没墙(开阔地)，画个温柔的大圈找墙
-        return "R" + String(20);
+    else { 
+        // 6. 找不到墙 (空地模式) -> 画大圈找墙
+        return "R" + String(30); 
     }
 
-    // 完美状态，直行
     return "F" + String(SPEED_FWD);
 }
