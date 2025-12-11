@@ -8,6 +8,20 @@
 #include "vive_tracker.h"
 #include "vive_utils.h"
 
+//TOPHAT
+#include <Wire.h>  // I2C
+
+#define TOPHAT_ADDR 0x28
+#define PIN_I2C_SDA 15  // GPIO 15
+#define PIN_I2C_SCL 16  //GPIO 16
+
+unsigned long lastTopHatTime = 0;
+byte wifiPacketCount = 0; // 数WiFi packet 
+
+
+
+
+
 //UART from owner board
 HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 
@@ -428,6 +442,12 @@ void setup() {
     OwnerSerial.begin(115200, SERIAL_8N1, 18, 17);
     Serial.println("UART from owner ready");
     
+    // TopHat I2C init
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Serial.println("TopHat I2C Initialized on pins 15/16");
+
+
+
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
 
@@ -475,6 +495,7 @@ void setup() {
     });
 
     server.on("/cmd", [](){
+        wifiPacketCount++; //wifi包
         String data = server.arg("data");
         Serial.print("Web: ");
         Serial.println(data);
@@ -787,6 +808,22 @@ void loop() {
         }
     }
     
+    //TopHat update
+    if (millis() - lastTopHatTime > 500) {
+        lastTopHatTime = millis();
+        
+        //向TopHat 发送计数
+        Wire.beginTransmission(TOPHAT_ADDR);
+        Wire.write(wifiPacketCount); 
+        byte error = Wire.endTransmission();
+        
+        if (error != 0) {
+           // Serial.print("TopHat I2C Error: "); Serial.println(error);
+        }
+
+        wifiPacketCount = 0; // 重计
+    }
+
     delay(5);
 
 
