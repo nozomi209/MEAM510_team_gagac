@@ -1,9 +1,6 @@
 /*
- * VIVE Tracker Interface Library
- * For ESP32-based VIVE tracking system
- * 
- * This library handles VIVE lighthouse pulse signal processing
- * to determine X and Y coordinates
+ * VIVE Tracker 接口库（ESP32）
+ * 负责解析 Lighthouse 脉冲（同步/扫描）并计算 X/Y 坐标
  */
 
 #ifndef VIVE_TRACKER_H
@@ -11,33 +8,33 @@
 
 #include <arduino.h>
 
-// VIVE tracking status codes
+// VIVE tracking status codes（跟踪状态）
 #define VIVE_STATUS_NO_SIGNAL    0
 #define VIVE_STATUS_SYNC_ONLY    1
 #define VIVE_STATUS_RECEIVING    2
 
-// Pulse type identifiers
+// Pulse type identifiers（脉冲类型：J=Y轴，K=X轴）
 #define VIVE_PULSE_TYPE_J        1
 #define VIVE_PULSE_TYPE_K        2
 
 class ViveTracker {
 private:
-    // Pin configuration
+    // Pin configuration（信号输入脚）
     int m_signalPin;
     
-    // Timing data (updated by interrupt)
+    // Timing data (updated by interrupt)（中断记录脉冲时间）
     volatile uint32_t m_risingEdgeTime;
     volatile uint32_t m_fallingEdgeTime;
     
-    // Coordinate data
+    // Coordinate data（解析出的坐标）
     uint16_t m_xCoordinate;
     uint16_t m_yCoordinate;
     
-    // Status tracking
+    // Status tracking（状态机）
     int m_trackingStatus;
     int m_currentPulseType;
     
-    // Pulse processing parameters
+    // Pulse processing parameters（滤除异常脉冲的阈值/计数）
     int m_sweepWidthThreshold;
     uint32_t m_lastFallingEdge;
     int m_spuriousPulseCount;

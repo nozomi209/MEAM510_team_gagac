@@ -5,14 +5,14 @@
 
 #include "vive_utils.h"
 
-// Fast arctangent approximation using polynomial
+// Fast arctangent approximation using polynomial 多项式 arctan 近似
 float fastArctan(float x) {
     float xSquared = x * x;
     // Polynomial approximation: x * (0.995354 + x^2 * (-0.288679 + x^2 * 0.079331))
     return x * (0.995354 + xSquared * (-0.288679 + xSquared * 0.079331));
 }
 
-// Fast atan2 implementation
+// Fast atan2 implementation：按象限选择近似，速度优先
 float fastAtan2(float y, float x) {
     float angle;
     
@@ -37,7 +37,7 @@ float fastAtan2(float y, float x) {
     return angle;
 }
 
-// Median filter for smoothing coordinate data
+// Median filter for smoothing coordinate data 三值中值滤波，抑制跳变
 uint32_t medianFilter(uint32_t a, uint32_t b, uint32_t c) {
     if ((a <= b) && (a <= c)) {
         return (b <= c) ? b : c;
@@ -48,27 +48,19 @@ uint32_t medianFilter(uint32_t a, uint32_t b, uint32_t c) {
     }
 }
 
-// Process VIVE tracker data with filtering and calibration
+// Process VIVE tracker data with minimal filtering
+// - 状态正常：原始 -> 校准 -> 限幅（去掉中值/离群/EMA，方便直接看原始）
+// - 状态异常：清零并尝试重新同步
 void processViveData(ViveTracker& tracker, uint16_t& x, uint16_t& y) {
-    // Static variables for filtering history
-    static uint16_t x0, y0;
-    static uint16_t x1, y1;
-    static uint16_t x2, y2;
-    
     if (tracker.getStatus() == VIVE_STATUS_RECEIVING) {
-        // Update filter history
-        x2 = x1;
-        y2 = y1;
-        x1 = x0;
-        y1 = y0;
-        
-        // Get raw coordinates and apply calibration
-        x0 = tracker.getXCoordinate() - VIVE_CALIBRATION_X;
-        y0 = tracker.getYCoordinate() - VIVE_CALIBRATION_Y;
-        
-        // Apply median filter for noise reduction
-        x = medianFilter(x0, x1, x2);
-        y = medianFilter(y0, y1, y2);
+        // 原始坐标 + 校准（防止减偏移下溢）
+        int32_t rawX = (int32_t)tracker.getXCoordinate() - VIVE_CALIBRATION_X;
+        int32_t rawY = (int32_t)tracker.getYCoordinate() - VIVE_CALIBRATION_Y;
+        if (rawX < 0) rawX = 0;
+        if (rawY < 0) rawY = 0;
+
+        x = (uint16_t)rawX;
+        y = (uint16_t)rawY;
         
         // Constrain to valid range
         x = constrain(x, VIVE_X_MIN, VIVE_X_MAX);

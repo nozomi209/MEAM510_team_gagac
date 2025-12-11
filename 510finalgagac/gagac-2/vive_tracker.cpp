@@ -1,21 +1,18 @@
-/*
- * VIVE Tracker Interface Library Implementation
- * For ESP32-based VIVE tracking system
- */
+/* VIVE Tracker 接口实现：通过中断解析同步/扫描脉冲，生成 X/Y 坐标 */
 
 #include "vive_tracker.h"
 
-// Mutex for interrupt-safe operations
+// Mutex for interrupt-safe operations（保护中断共享变量）
 portMUX_TYPE viveMutex = portMUX_INITIALIZER_UNLOCKED;
 
-// Global interrupt handler wrapper
+// Global interrupt handler wrapper（封装 attachInterruptArg 回调）
 void IRAM_ATTR viveInterruptHandler(void* trackerInstance) {
     portENTER_CRITICAL_ISR(&viveMutex);
     static_cast<ViveTracker*>(trackerInstance)->interruptHandler(micros());
     portEXIT_CRITICAL_ISR(&viveMutex);
 }
 
-// Constructor
+// Constructor（指定信号引脚）
 ViveTracker::ViveTracker(int pin) {
     m_signalPin = pin;
     m_trackingStatus = VIVE_STATUS_NO_SIGNAL;
@@ -35,7 +32,7 @@ void ViveTracker::initialize() {
     startTracking();
 }
 
-// Initialize with new pin
+// Initialize with new pin（重新指定引脚）
 void ViveTracker::initialize(int pin) {
     m_signalPin = pin;
     pinMode(m_signalPin, INPUT);
@@ -55,7 +52,7 @@ void ViveTracker::stopTracking() {
     detachInterrupt(digitalPinToInterrupt(m_signalPin));
 }
 
-// Interrupt service routine
+// Interrupt service routine：记录脉冲边沿时间，收到同步后开始解析扫描脉冲
 void IRAM_ATTR ViveTracker::interruptHandler(uint32_t microsecondTime) {
     if (digitalRead(m_signalPin) == HIGH) {
         m_risingEdgeTime = microsecondTime;
@@ -69,7 +66,7 @@ void IRAM_ATTR ViveTracker::interruptHandler(uint32_t microsecondTime) {
     }
 }
 
-// Check if pulse is K-type
+// Check if pulse is K-type（K 脉冲对应 X）
 bool ViveTracker::isKPulseType(uint32_t pulseWidth) {
     // K-type pulses have specific width ranges
     if (pulseWidth < 75) return false;
@@ -79,7 +76,7 @@ bool ViveTracker::isKPulseType(uint32_t pulseWidth) {
     return true;
 }
 
-// Check if pulse is J-type
+// Check if pulse is J-type（J 脉冲对应 Y）
 bool ViveTracker::isJPulseType(uint32_t pulseWidth) {
     // J-type pulses are the complement of K-type
     if (pulseWidth < 75) return true;
@@ -89,7 +86,7 @@ bool ViveTracker::isJPulseType(uint32_t pulseWidth) {
     return false;
 }
 
-// Analyze incoming pulse
+// Analyze incoming pulse：区分同步/扫描，更新坐标或判定丢失
 void ViveTracker::analyzePulse() {
     if (m_lastFallingEdge != m_fallingEdgeTime) {
         uint32_t pulseWidth = m_fallingEdgeTime - m_risingEdgeTime;
@@ -141,7 +138,7 @@ int ViveTracker::getStatus() {
     return m_trackingStatus;
 }
 
-// Synchronize with VIVE base stations
+// Synchronize with VIVE base stations：统计一定时间内脉冲数，推断状态
 uint32_t ViveTracker::synchronize(int expectedPulseCount) {
     uint32_t startTime = millis();
     uint32_t lastFalling = m_fallingEdgeTime;

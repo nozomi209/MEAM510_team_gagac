@@ -1,5 +1,6 @@
 // gagac-2.ino 
 
+// 主控（Servant）程序：负责电机驱动、编码器测速、VIVE 追踪、Wi-Fi 网页控制，以及与 Owner 板的 UART 通信
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HardwareSerial.h>
@@ -10,7 +11,7 @@
 //UART from owner board
 HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
 
-//pin
+// 车体左右电机驱动引脚（接双路驱动器）
 #define MOTOR_L_PWM   9
 #define MOTOR_L_IN1   10
 #define MOTOR_L_IN2   11
@@ -96,8 +97,8 @@ int pwmOutputR = 0;
 hw_timer_t *controlTimer = NULL;
 volatile bool controlFlag = false;
 
-//VIVE 默认关掉
-bool isViveActive = false;
+//VIVE 默认开启（便于直接读坐标）
+bool isViveActive = true;
 bool isViveTestMode = false;  // 测试模式：输出详细坐标数据
 
 unsigned long lastSpeedCalcTime = 0;
@@ -113,6 +114,7 @@ float viveX = 0.0, viveY = 0.0;
 float viveAngle = 0.0;
 
 //interrupts
+// 左轮编码器 A 相上升沿中断：根据 B 相判断计数方向
 void IRAM_ATTR encoderL_ISR() {
     if (digitalRead(ENCODER_L_B)) {
         encoderCountL++;
@@ -121,6 +123,7 @@ void IRAM_ATTR encoderL_ISR() {
     }
 }
 
+// 右轮编码器 A 相上升沿中断：根据 B 相判断计数方向
 void IRAM_ATTR encoderR_ISR() {
     if (digitalRead(ENCODER_R_B)) {
         encoderCountR++;
@@ -129,11 +132,13 @@ void IRAM_ATTR encoderR_ISR() {
     }
 }
 
+// 控制周期定时器回调：只置位标志位，避免耗时操作
 void IRAM_ATTR onControlTimer() {
     controlFlag = true;
 }
 
 //motor control
+// 依据正/负号设置电机方向与 PWM，占空比受限于 PWM_MAX
 void setMotorL(int speed) {
     speed = constrain(speed, -PWM_MAX, PWM_MAX);
     
@@ -172,6 +177,7 @@ void stopMotors() {
 }
 
 // speed calculate
+// 基于编码器计数差分与时间间隔计算当前速度 (RPM)
 void calculateSpeed() {
     unsigned long currentTime = millis();
     unsigned long deltaTime = currentTime - lastSpeedCalcTime;
@@ -190,6 +196,7 @@ void calculateSpeed() {
 }
 
 //updated PID function
+// 左轮 PID + 前馈控制，动态调整 Kp/Ki
 int pidControlL() {
     float speedRatio = abs(targetSpeedL) / 45.0;  
     
@@ -293,6 +300,7 @@ int pidControlR() {
 }
 
 //set car speed &turn
+// 仅设定目标转速，实际输出由定时中断内的 PID 完成
 void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
@@ -411,12 +419,13 @@ WebServer server(80);
 void handleRoot() { server.send(200, "text/html", webpage); }
 
 // Arduino main function 
+// 初始化串口、Wi-Fi AP、Web API、引脚模式、PWM、编码器中断、VIVE、控制定时器
 void setup() {
     Serial.begin(115200);
     delay(1000);
 
-    //来自 owner 的 UART（RX=GPIO17, TX=GPIO18）
-    OwnerSerial.begin(115200, SERIAL_8N1, 17, 18);
+    //来自 owner 的 UART（实际接线：Servant TX=GPIO17 -> Owner RX，Servant RX=GPIO18 <- Owner TX）
+    OwnerSerial.begin(115200, SERIAL_8N1, 18, 17);
     Serial.println("UART from owner ready");
     
     WiFi.mode(WIFI_AP);
@@ -585,9 +594,11 @@ void setup() {
     Serial.printf("   跟踪器2 (车后右边): GPIO%d\n", VIVE_PIN_BACK);
     
     // Synchronize with base stations
-    //Serial.println("Synchronizing VIVE trackers...");
-    //viveFront.synchronize(5);
-    //viveBack.synchronize(5);
+    Serial.println("Synchronizing VIVE trackers...");
+    viveFront.synchronize(5);
+    viveBack.synchronize(5);
+    Serial.printf("同步结果: tracker1=%d, tracker2=%d (0=无信号,1=仅同步,2=接收中)\n",
+                  viveFront.getStatus(), viveBack.getStatus());
     Serial.println("VIVE synchronization complete");
     Serial.println();
     
@@ -609,6 +620,7 @@ void setup() {
 }
 
 void loop() {
+    // 轮询处理 Web 请求
     server.handleClient(); 
     if (isViveActive) {
         // Process VIVE tracking data
@@ -628,10 +640,10 @@ void loop() {
         // 车辆前进方向：垂直于连线方向（向前或向后，取决于定义）
         float deltaX = float(viveXBack) - float(viveXFront);  // 从左边到右边的X方向
         float deltaY = float(viveYBack) - float(viveYFront);  // 从左边到右边的Y方向
-        // atan2(deltaY, deltaX) 给出连线方向的角度（从左指向右）
+        // 使用标准 atan2f 计算角度，减少近零时的近似误差
         // VIVE_ANGLE_OFFSET 表示车辆前进方向相对于连线方向的偏移
         // 如果角度方向不对，可以调整 VIVE_ANGLE_OFFSET 的值（如改为 -90.0）
-        viveAngle = (180.0 / PI) * fastAtan2(deltaY, deltaX) + VIVE_ANGLE_OFFSET;
+        viveAngle = (180.0 / PI) * atan2f(deltaY, deltaX) + VIVE_ANGLE_OFFSET;
         
         // Normalize angle to -180 to 180 range
         if (viveAngle > 180.0) {
@@ -727,7 +739,8 @@ void loop() {
         // Print VIVE data periodically
         static unsigned long lastVivePrintTime = 0;
         // 测试模式：更频繁、更详细的输出
-        if (isViveTestMode && millis() - lastVivePrintTime > 200) {
+        // 测试模式下提高输出频率（原 200ms -> 100ms）
+        if (isViveTestMode && millis() - lastVivePrintTime > 100) {
             lastVivePrintTime = millis();
             // 获取原始坐标（未滤波）
             uint16_t rawXFront = viveFront.getXCoordinate();
@@ -747,10 +760,14 @@ void loop() {
             Serial.printf("  滤波后:   X=%d, Y=%d\n", viveXBack, viveYBack);
             Serial.printf("  状态:     %d (0=无信号, 1=仅同步, 2=接收中)\n", viveBack.getStatus());
             Serial.println("───────────────────────────────────────");
+            float deltaX = float(viveXBack) - float(viveXFront);
+            float deltaY = float(viveYBack) - float(viveYFront);
+            Serial.printf("ΔX=%.1f, ΔY=%.1f, angle=%.1f° (offset=%.1f°)\n",
+                          deltaX, deltaY, viveAngle, VIVE_ANGLE_OFFSET);
             Serial.printf("中心位置: X=%.2f, Y=%.2f\n", viveX, viveY);
             Serial.printf("朝向角度: %.2f°\n", viveAngle);
             Serial.printf("左右距离: %.2f (用于验证，应接近车后部宽度)\n", 
-                         sqrt(pow(viveXBack - viveXFront, 2) + pow(viveYBack - viveYFront, 2)));
+                         sqrt(pow(deltaX, 2) + pow(deltaY, 2)));
             Serial.println("═══════════════════════════════════════\n");
         }
         // 正常模式：1秒输出一次

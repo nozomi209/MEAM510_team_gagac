@@ -1,6 +1,5 @@
-//昨晚最新版,有改系数
 // behavior-wall.ino
-// 右侧巡墙逻辑 (Right Wall Following)
+// 右侧巡墙逻辑：基于 3 路 ToF（前/右前/右后）实现避障与贴墙，参数可实时调整
 
 #include <Arduino.h>
 

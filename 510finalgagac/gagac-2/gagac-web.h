@@ -1,3 +1,4 @@
+// 嵌入式网页（AP 模式下访问 192.168.4.1）：控制底盘运动、模式切换、VIVE 数据展示与参数调节
 const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
