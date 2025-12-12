@@ -6,6 +6,16 @@
 
 ---
 
+## 🕹️ 网页控制速查（含攻击伺服）
+
+- 访问方式：AP 模式连接 `ESP32-MobileBase`（密码 `12345678`），浏览器打开 `192.168.4.1`。
+- 运动控制：方向键按钮或键盘箭头，`S` 停车，`Speed/Turn` 滑条实时调速。
+- 模式切换：`Start Auto` → `AUTO_ON`，`Enable VIVE` → `VIVE_ON`，再次点击关闭。
+- 手动规划：`Start Manual Plan` 发送 `MP_ON`，`Send Route` 发送 `MP_ROUTE:<路点串>`，`Plan to Target` / `Stop Plan` 控制轴对齐规划。
+- 攻击伺服：`Start Attack` 发送 `SV1` 开启往返攻击（每秒 0/180 度切换）；`Stop Attack` 发送 `SV0` 停止并归零。伺服接在 `SERVO_PIN=8`，50Hz，500–2500us 脉宽。
+
+---
+
 ## 🔄 完整工作流程
 
 ### 流程图

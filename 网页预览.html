@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobile Base Control - 预览版</title>
+<style>
+  body {
+    background: #f4f7f6;
+    font-family: "Poppins", "Microsoft YaHei", sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px 0;
+  }
+  .control-card {
+    background: #fff;
+    border-radius: 24px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+    padding: 24px;
+    width: 320px;
+    text-align: center;
+    margin-top: 10px;
+  }
+  h2 {
+    color: #444;
+    font-size: 1.4em;
+    margin-bottom: 25px;
+    font-weight: 600;
+  }
+  .slider-group {
+    margin-bottom: 25px;
+    text-align: left;
+  }
+  label {
+    font-size: 0.9em;
+    color: #666;
+    font-weight: 500;
+    margin-left: 2px;
+  }
+  
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    margin-top: 12px;
+    height: 8px;
+    border-radius: 5px;
+    background: #ececec;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #92C08E;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+  
+  .control-pad {
+    display: grid;
+    grid-template-columns: 80px 80px 80px;
+    grid-template-rows: 80px 80px 80px;
+    justify-content: center;
+    align-items: center;
+    margin-top: 15px;
+    margin-bottom: 25px;
+  }
+  .btn {
+    background: #92C08E;
+    border: none;
+    color: white;
+    font-size: 1.2em;
+    border-radius: 14px;
+    height: 60px;
+    width: 60px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 10px rgba(146, 192, 142, 0.4);
+  }
+  .btn:active {
+    transform: scale(0.95);
+    box-shadow: 0 2px 5px rgba(146, 192, 142, 0.3);
+  }
+  .btn:hover {
+    background: #81b37d;
+  }
+  
+  .mode-btn-group {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 25px;
+  }
+  .mode-btn {
+    flex: 1;
+    border: none;
+    color: white;
+    font-size: 0.95em;
+    font-weight: 600;
+    border-radius: 14px;
+    height: 50px;
+    cursor: pointer;
+    transition: all 0.3s;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  }
+  .mode-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+
+  footer {
+    color: #ccc;
+    font-size: 0.75em;
+    margin-top: 25px;
+  }
+  
+  .preview-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-weight: 600;
+    border-radius: 12px;
+    margin-bottom: 15px;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  }
+  
+  @media (max-height: 700px) {
+    body { padding: 10px 0; }
+    .control-card { padding: 20px; width: 95vw; max-width: 360px; }
+  }
+</style>
+</head>
+
+<body>
+  <div class="control-card">
+    <div class="preview-banner">
+      🎨 网页预览模式 - 所有按钮仅演示效果
+    </div>
+    
+    <h2>Mobile Base Control</h2>
+
+    <div class="slider-group">
+      <label for="speedSlider">Speed: <span id="speedVal">50%</span></label>
+      <input type="range" id="speedSlider" min="0" max="100" value="50">
+    </div>
+
+    <div class="slider-group">
+      <label for="turnSlider">Turn Factor: <span id="turnVal">30%</span></label>
+      <input type="range" id="turnSlider" min="0" max="100" value="30">
+    </div>
+
+    <div class="control-pad">
+      <div></div>
+      <button class="btn" id="btnF">F</button>
+      <div></div>
+
+      <button class="btn" id="btnL">L</button>
+      <button class="btn" id="btnS">S</button>
+      <button class="btn" id="btnR">R</button>
+
+      <div></div>
+      <button class="btn" id="btnB">B</button>
+      <div></div>
+    </div>
+
+    <div class="mode-btn-group">
+      <button class="mode-btn" id="btnAuto" style="background:#F7E290;">
+        Start Auto
+      </button>
+      
+      <button class="mode-btn" id="btnVive" style="background:#E79DC3;">
+        Enable VIVE
+      </button>
+    </div>
+
+    <div class="mode-btn-group" style="margin-top:10px;">
+      <button class="mode-btn" id="btnAttackStart" style="background:#f7b5b5;">
+        Start Attack
+      </button>
+      <button class="mode-btn" id="btnAttackStop" style="background:#b5d8f7;">
+        Stop Attack
+      </button>
+    </div>
+
+    <!-- 轴对齐规划：设置目标点并自动避障 -->
+    <div style="margin-top:15px; padding:12px; background:#f0f8ff; border-radius:12px; border:2px solid #92C08E;">
+      <h3 style="margin:0 0 12px 0; font-size:1em; color:#444; text-align:center;">🎯 智能路径规划与执行</h3>
+      
+      <!-- 配置状态检查清单 -->
+      <div style="margin-bottom:12px; padding:10px; background:#fff; border-radius:8px; border:1px solid #ddd;">
+        <h4 style="margin:0 0 8px 0; font-size:0.9em; color:#666;">📋 配置清单</h4>
+        <div style="display:flex; flex-direction:column; gap:5px; font-size:0.85em;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkVive" style="font-size:1.2em;">⚪</span>
+            <span>VIVE 定位系统</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkBound" style="font-size:1.2em;">✅</span>
+            <span>场地边界</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkObs" style="font-size:1.2em;">⚪</span>
+            <span>障碍物配置</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkTarget" style="font-size:1.2em;">⚪</span>
+            <span>目标点设置</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkPath" style="font-size:1.2em;">⚪</span>
+            <span>路径规划完成</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 目标点设置 -->
+      <div class="slider-group" style="margin-bottom:10px;">
+        <label for="planTarget">🎯 目标点 (x,y)</label>
+        <input id="planTarget" type="text" placeholder="例如: 4500,3200" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.9em; margin-top:8px;">
+        <small style="color:#777;">输入目标坐标，系统将自动规划避障路径</small>
+      </div>
+
+      <!-- 起点控制 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">📍 起点设置</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanSetStart" style="background:#8fd3f4; color:#234; font-size:0.85em;">锁定当前位置</button>
+          <button class="mode-btn" id="btnPlanClearStart" style="background:#d3d3d3; color:#555; font-size:0.85em;">使用实时位置</button>
+        </div>
+        <input id="planStartShow" type="text" readonly placeholder="使用 VIVE 实时坐标" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px; background:#f9f9f9; text-align:center;">
+      </div>
+
+      <!-- 障碍物设置 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">🚧 障碍物配置</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanObsDefault" style="background:#ffe8a1; color:#444; font-size:0.85em;">加载默认</button>
+          <button class="mode-btn" id="btnPlanObs" style="background:#ffd28e; font-size:0.85em;">自定义</button>
+          <button class="mode-btn" id="btnPlanObsOff" style="background:#d3d3d3; color:#555; font-size:0.85em;">禁用</button>
+        </div>
+        <input id="planObs" type="text" placeholder="left,right,top,bottom,margin" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
+        <small style="color:#777;">格式: 左,右,上,下,安全边距(可选)</small>
+      </div>
+
+      <!-- 边界设置 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">📏 场地边界</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanBound" style="background:#cde4ff; color:#444; font-size:0.85em;">应用边界</button>
+        </div>
+        <input id="planBound" type="text" value="3920,5100,5700,1390" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
+        <small style="color:#777;">格式: xmin,xmax,ymax,ymin (默认场地尺寸)</small>
+      </div>
+
+      <!-- 执行控制按钮 -->
+      <div class="mode-btn-group" style="margin-top:12px;">
+        <button class="mode-btn" id="btnPlan1" style="background:#92C08E; font-size:1em; font-weight:bold;">
+          ▶️ 开始规划并执行
+        </button>
+        <button class="mode-btn" id="btnPlanStop" style="background:#f4c2c2; font-size:1em; font-weight:bold;">
+          ⏹️ 停止
+        </button>
+      </div>
+    </div>
+
+    <!-- 路径可视化大图 -->
+    <div style="margin-top:15px; padding:12px; background:#f8f9fa; border-radius:12px; border:2px solid #92C08E;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0; font-size:1em; color:#444;">🗺️ 路径预览与实时监控</h3>
+        <small id="pathStatus" style="color:#888; font-weight:600;">等待规划...</small>
+      </div>
+      <canvas id="pathCanvas" width="480" height="400" style="width:100%; max-width:500px; border:2px solid #92C08E; border-radius:8px; background:#fff; display:block; margin:0 auto; cursor:crosshair;"></canvas>
+      <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.8em; color:#666;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:3px; background:#68b684;"></span>
+          <span>场地边界</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:12px; background:rgba(255,99,71,0.3); border:1px solid rgba(255,99,71,0.6);"></span>
+          <span>障碍物区域</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:3px; background:#3b82f6;"></span>
+          <span>规划路径</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#ff6b35; border-radius:50%;"></span>
+          <span>当前位置</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#666; border-radius:50%;"></span>
+          <span>起点</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#1d4ed8; border-radius:50%;"></span>
+          <span>目标点</span>
+        </div>
+      </div>
+      <div style="margin-top:8px; padding:8px; background:#fff3cd; border-radius:6px; font-size:0.8em; color:#856404;">
+        💡 提示：点击Canvas任意位置可快速设置目标点
+      </div>
+    </div>
+
+    <footer>Lab4.2 Team7 - Yui, Boru, Qingyun</footer>
+  </div>
+
+<script>
+  // 预览模式：模拟VIVE数据
+  document.getElementById("viveXVal").innerText = "4500";
+  document.getElementById("viveYVal").innerText = "3500";
+  
+  const speedSlider = document.getElementById("speedSlider");
+  const turnSlider = document.getElementById("turnSlider");
+  const speedVal = document.getElementById("speedVal");
+  const turnVal = document.getElementById("turnVal");
+
+  function updateSliderBackground(slider) {
+    const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+    slider.style.background = `linear-gradient(to right, #92C08E 0%, #92C08E ${value}%, #ececec ${value}%, #ececec 100%)`;
+  }
+
+  updateSliderBackground(speedSlider);
+  updateSliderBackground(turnSlider);
+
+  speedSlider.oninput = function() {
+    speedVal.innerText = this.value + "%";
+    updateSliderBackground(this);
+  };
+  turnSlider.oninput = function() {
+    turnVal.innerText = this.value + "%";
+    updateSliderBackground(this);
+  };
+
+  // VIVE Switch Logic
+  const btnVive = document.getElementById("btnVive");
+  let viveEnabled = false;
+
+  btnVive.onclick = () => {
+    viveEnabled = !viveEnabled;
+    if (viveEnabled) {
+      btnVive.innerText = "Disable VIVE";
+      btnVive.style.background = "#ce93d8";
+      configState.viveActive = true;
+    } else {
+      btnVive.innerText = "Enable VIVE";
+      btnVive.style.background = "#E79DC3";
+      configState.viveActive = false;
+      configState.pathPlanned = false;
+    }
+    updateChecklist();
+  };
+
+  // Checklist 元素
+  const checkVive = document.getElementById("checkVive");
+  const checkBound = document.getElementById("checkBound");
+  const checkObs = document.getElementById("checkObs");
+  const checkTarget = document.getElementById("checkTarget");
+  const checkPath = document.getElementById("checkPath");
+  
+  let configState = {
+    viveActive: false,
+    boundSet: true,
+    obsSet: false,
+    targetSet: false,
+    pathPlanned: false
+  };
+  
+  function updateChecklist() {
+    checkVive.innerText = configState.viveActive ? "✅" : "⚪";
+    checkBound.innerText = configState.boundSet ? "✅" : "⚪";
+    checkObs.innerText = configState.obsSet ? "✅" : "⚪";
+    checkTarget.innerText = configState.targetSet ? "✅" : "⚪";
+    checkPath.innerText = configState.pathPlanned ? "✅" : "⚪";
+  }
+
+  const planTarget = document.getElementById("planTarget");
+  const planObs = document.getElementById("planObs");
+  const planBound = document.getElementById("planBound");
+  const pathCanvas = document.getElementById("pathCanvas");
+  const pathStatus = document.getElementById("pathStatus");
+  const planStartShow = document.getElementById("planStartShow");
+  const ctx = pathCanvas.getContext("2d");
+
+  document.getElementById("btnPlanObsDefault").onclick = () => {
+    planObs.value = "4100,4945,4240,3130,150";
+    configState.obsSet = true;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "✅ 已加载默认障碍物";
+  };
+
+  document.getElementById("btnPlanObsOff").onclick = () => {
+    configState.obsSet = false;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "障碍物已禁用";
+  };
+
+  document.getElementById("btnPlanObs").onclick = () => {
+    if (planObs.value.trim().length > 0) {
+      configState.obsSet = true;
+      updateChecklist();
+      visualizePath();
+      pathStatus.innerText = "障碍物已更新";
+    }
+  };
+
+  document.getElementById("btnPlan1").onclick = () => {
+    if (!planTarget.value.trim()) {
+      alert("❌ 请输入目标坐标，格式: x,y\n例如: 4500,3200");
+      return;
+    }
+    if (!configState.viveActive) {
+      alert("⚠️ 请先启用 VIVE 定位系统！");
+      return;
+    }
+    configState.pathPlanned = true;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "✅ 路径已规划，执行中";
+  };
+
+  document.getElementById("btnPlanSetStart").onclick = () => {
+    planStartShow.value = "4500.0,3500.0";
+    planStartShow.style.background = "#e3f2fd";
+    planStartShow.style.fontWeight = "600";
+    visualizePath();
+    pathStatus.innerText = "📍 起点已锁定";
+  };
+
+  document.getElementById("btnPlanClearStart").onclick = () => {
+    planStartShow.value = "使用 VIVE 实时坐标";
+    planStartShow.style.background = "#f9f9f9";
+    planStartShow.style.fontWeight = "normal";
+    visualizePath();
+    pathStatus.innerText = "📍 切换为实时起点";
+  };
+
+  function parseCSV(str, expected) {
+    const parts = str.split(",").map(s => s.trim()).filter(s => s.length > 0);
+    if (expected && parts.length !== expected) return null;
+    return parts.map(parseFloat);
+  }
+
+  function getCurrentPose() {
+    return { x: 4500, y: 3500 }; // 预览模式：固定位置
+  }
+
+  function computePath(start, target, obs, margin, bound) {
+    const clamp = (p) => ({
+      x: Math.min(Math.max(p.x, bound.xmin), bound.xmax),
+      y: Math.min(Math.max(p.y, bound.ymin), bound.ymax)
+    });
+    const inside = (p) => (p.x >= bound.xmin && p.x <= bound.xmax && p.y >= bound.ymin && p.y <= bound.ymax);
+    const normObs = () => ({
+      left: Math.min(obs.left, obs.right),
+      right: Math.max(obs.left, obs.right),
+      bottom: Math.min(obs.bottom, obs.top),
+      top: Math.max(obs.bottom, obs.top)
+    });
+    const insideBox = (p, b) => p.x >= b.left && p.x <= b.right && p.y >= b.bottom && p.y <= b.top;
+    const hit = (seg, box) => {
+      if (insideBox(seg.a, box) || insideBox(seg.b, box)) return true;
+      if (Math.abs(seg.a.y - seg.b.y) < 1e-3) {
+        const y = seg.a.y;
+        if (y >= box.bottom && y <= box.top) {
+          const minx = Math.min(seg.a.x, seg.b.x);
+          const maxx = Math.max(seg.a.x, seg.b.x);
+          if (maxx >= box.left && minx <= box.right) return true;
+        }
+      } else {
+        const x = seg.a.x;
+        if (x >= box.left && x <= box.right) {
+          const miny = Math.min(seg.a.y, seg.b.y);
+          const maxy = Math.max(seg.a.y, seg.b.y);
+          if (maxy >= box.bottom && miny <= box.top) return true;
+        }
+      }
+      return false;
+    };
+    const ok = (segs, box) => segs.every(s => inside(s.a) && inside(s.b) && !hit(s, box));
+
+    let S = clamp(start);
+    let T = clamp(target);
+    const base = normObs();
+    const box = {
+      left: base.left - margin,
+      right: base.right + margin,
+      bottom: base.bottom - margin,
+      top: base.top + margin
+    };
+
+    const segs = [];
+    segs[0] = { a: S, b: { x: T.x, y: S.y } };
+    segs[1] = { a: segs[0].b, b: T };
+    if (ok(segs, box)) return segs.slice(0, 2);
+    
+    segs[0] = { a: S, b: { x: S.x, y: T.y } };
+    segs[1] = { a: segs[0].b, b: T };
+    if (ok(segs, box)) return segs.slice(0, 2);
+
+    const Y_top = Math.min(Math.max(box.top, bound.ymin), bound.ymax);
+    const Y_bottom = Math.min(Math.max(box.bottom, bound.ymin), bound.ymax);
+    const X_left = Math.min(Math.max(box.left, bound.xmin), bound.xmax);
+    const X_right = Math.min(Math.max(box.right, bound.xmin), bound.xmax);
+
+    const detours = [
+      [ {a:S, b:{x:S.x, y:Y_top}}, {a:{x:S.x, y:Y_top}, b:{x:T.x, y:Y_top}}, {a:{x:T.x, y:Y_top}, b:T} ],
+      [ {a:S, b:{x:S.x, y:Y_bottom}}, {a:{x:S.x, y:Y_bottom}, b:{x:T.x, y:Y_bottom}}, {a:{x:T.x, y:Y_bottom}, b:T} ],
+      [ {a:S, b:{x:X_left, y:S.y}}, {a:{x:X_left, y:S.y}, b:{x:X_left, y:T.y}}, {a:{x:X_left, y:T.y}, b:T} ],
+      [ {a:S, b:{x:X_right, y:S.y}}, {a:{x:X_right, y:S.y}, b:{x:X_right, y:T.y}}, {a:{x:X_right, y:T.y}, b:T} ],
+    ];
+    for (const d of detours) {
+      if (ok(d, box)) return d;
+    }
+    return null;
+  }
+
+  function drawPath(segs, obs, margin, bound, start, target) {
+    const w = pathCanvas.width, h = pathCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const scaleX = w / (bound.xmax - bound.xmin);
+    const scaleY = h / (bound.ymax - bound.ymin);
+    const tx = (x) => (x - bound.xmin) * scaleX;
+    const ty = (y) => h - (y - bound.ymin) * scaleY;
+
+    ctx.strokeStyle = "#68b684";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, 0, w, h);
+
+    ctx.strokeStyle = "#e0e0e0";
+    ctx.lineWidth = 1;
+    const gridStepX = (bound.xmax - bound.xmin) / 5;
+    const gridStepY = (bound.ymax - bound.ymin) / 5;
+    for (let i = 1; i < 5; i++) {
+      const gx = tx(bound.xmin + gridStepX * i);
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, h);
+      ctx.stroke();
+    }
+    for (let i = 1; i < 5; i++) {
+      const gy = ty(bound.ymin + gridStepY * i);
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    if (configState.obsSet) {
+      const box = {
+        left: Math.min(obs.left, obs.right) - margin,
+        right: Math.max(obs.left, obs.right) + margin,
+        bottom: Math.min(obs.bottom, obs.top) - margin,
+        top: Math.max(obs.bottom, obs.top) + margin
+      };
+      ctx.fillStyle = "rgba(255,99,71,0.25)";
+      ctx.strokeStyle = "rgba(255,99,71,0.8)";
+      ctx.lineWidth = 2;
+      const ox = tx(box.left), oy = ty(box.top);
+      const ow = (box.right - box.left) * scaleX;
+      const oh = (box.top - box.bottom) * scaleY;
+      ctx.fillRect(ox, oy, ow, oh);
+      ctx.strokeRect(ox, oy, ow, oh);
+    }
+
+    if (segs) {
+      ctx.strokeStyle = "#3b82f6";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(tx(segs[0].a.x), ty(segs[0].a.y));
+      segs.forEach(s => ctx.lineTo(tx(s.b.x), ty(s.b.y)));
+      ctx.stroke();
+      
+      ctx.fillStyle = "#3b82f6";
+      segs.forEach(s => {
+        ctx.beginPath();
+        ctx.arc(tx(s.b.x), ty(s.b.y), 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    const drawDot = (p, color, size = 5, label = "") => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(tx(p.x), ty(p.y), size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      
+      if (label) {
+        ctx.fillStyle = color;
+        ctx.font = "bold 11px Arial";
+        ctx.fillText(label, tx(p.x) + size + 4, ty(p.y) + 4);
+      }
+    };
+    
+    drawDot(start, "#666", 6, "起点");
+    
+    if (configState.targetSet && target) {
+      drawDot(target, "#1d4ed8", 6, "目标");
+    }
+    
+    const current = getCurrentPose();
+    if (current.x !== 0 || current.y !== 0) {
+      drawDot(current, "#ff6b35", 7, "当前");
+    }
+  }
+
+  function visualizePath() {
+    const bArr = parseCSV(planBound.value.trim(), 4);
+    if (!bArr) { 
+      pathStatus.innerText = "❌ 边界格式错误"; 
+      return; 
+    }
+    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
+    
+    const pose = (planStartShow.value && planStartShow.value !== "使用 VIVE 实时坐标")
+      ? (() => { 
+          const p = parseCSV(planStartShow.value, 2); 
+          return p ? { x:p[0], y:p[1] } : getCurrentPose(); 
+        })()
+      : getCurrentPose();
+    
+    const t = parseCSV(planTarget.value.trim(), 2);
+    const target = t ? { x: t[0], y: t[1] } : null;
+    
+    const obsArr = parseCSV(planObs.value.trim());
+    const obs = (obsArr && obsArr.length >= 4) ? {
+      left: obsArr[0], right: obsArr[1], top: obsArr[2], bottom: obsArr[3]
+    } : { left:0, right:0, top:0, bottom:0 };
+    const margin = (obsArr && obsArr.length >= 5) ? obsArr[4] : 0;
+    
+    let segs = null;
+    if (target) {
+      segs = computePath(pose, target, obs, margin, bound);
+      if (!segs) {
+        pathStatus.innerText = "⚠️ 无可行路径";
+      }
+    }
+    
+    drawPath(segs, obs, margin, bound, pose, target);
+    
+    if (!target) {
+      pathStatus.innerText = "等待设置目标点...";
+    } else if (segs) {
+      pathStatus.innerText = `✅ 路径规划完成 (${segs.length}段)`;
+    }
+  }
+
+  planTarget.addEventListener('input', () => {
+    const val = planTarget.value.trim();
+    if (val.indexOf(",") > 0) {
+      configState.targetSet = true;
+      updateChecklist();
+      visualizePath();
+    } else {
+      configState.targetSet = false;
+      updateChecklist();
+    }
+  });
+
+  planObs.addEventListener('input', () => {
+    const val = planObs.value.trim();
+    if (val.split(",").length >= 4) {
+      visualizePath();
+    }
+  });
+
+  pathCanvas.addEventListener('click', (e) => {
+    const rect = pathCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const bArr = parseCSV(planBound.value.trim(), 4);
+    if (!bArr) return;
+    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
+    
+    const w = pathCanvas.width, h = pathCanvas.height;
+    const scaleX = w / (bound.xmax - bound.xmin);
+    const scaleY = h / (bound.ymax - bound.ymin);
+    
+    const worldX = Math.round(bound.xmin + (x / rect.width) * w / scaleX);
+    const worldY = Math.round(bound.ymax - (y / rect.height) * h / scaleY);
+    
+    planTarget.value = `${worldX},${worldY}`;
+    configState.targetSet = true;
+    updateChecklist();
+    visualizePath();
+    
+    pathStatus.innerText = `🎯 目标点已选择: (${worldX}, ${worldY})`;
+  });
+
+  updateChecklist();
+  setTimeout(() => visualizePath(), 500);
+</script>
+</body>
+</html>
+

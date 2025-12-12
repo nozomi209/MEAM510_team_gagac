@@ -171,7 +171,16 @@ const char webpage[] PROGMEM = R"rawliteral(
       </button>
     </div>
 
-    <!-- 手动规划控制 -->
+    <div class="mode-btn-group" style="margin-top:10px;">
+      <button class="mode-btn" id="btnAttackStart" style="background:#f7b5b5;">
+        Start Attack
+      </button>
+      <button class="mode-btn" id="btnAttackStop" style="background:#b5d8f7;">
+        Stop Attack
+      </button>
+    </div>
+
+    <!-- 手动规划控制 - 传统Route方式 -->
     <div class="mode-btn-group" style="margin-top:10px;">
       <button class="mode-btn" id="btnMp" style="background:#9fc5e8;">
         Start Manual Plan
@@ -184,6 +193,122 @@ const char webpage[] PROGMEM = R"rawliteral(
       <label for="routeInput">Route (x,y,heading,bumps;...)</label>
       <textarea id="routeInput" style="width:100%; height:70px; margin-top:8px; border-radius:10px; border:1px solid #ddd; padding:8px; font-size:0.9em;">5120,4080,90,0;4661,4164,180,0;4661,4164,-90,1;4500,5800,90,4</textarea>
       <small style="color:#777;">示例: x,y,heading,bumps 多组用分号分隔</small>
+    </div>
+
+    <!-- 轴对齐规划：设置目标点并自动避障 -->
+    <div style="margin-top:15px; padding:12px; background:#f0f8ff; border-radius:12px; border:2px solid #92C08E;">
+      <h3 style="margin:0 0 12px 0; font-size:1em; color:#444; text-align:center;">🎯 智能路径规划与执行</h3>
+      
+      <!-- 配置状态检查清单 -->
+      <div style="margin-bottom:12px; padding:10px; background:#fff; border-radius:8px; border:1px solid #ddd;">
+        <h4 style="margin:0 0 8px 0; font-size:0.9em; color:#666;">📋 配置清单</h4>
+        <div style="display:flex; flex-direction:column; gap:5px; font-size:0.85em;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkVive" style="font-size:1.2em;">⚪</span>
+            <span>VIVE 定位系统</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkBound" style="font-size:1.2em;">✅</span>
+            <span>场地边界</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkObs" style="font-size:1.2em;">⚪</span>
+            <span>障碍物配置</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkTarget" style="font-size:1.2em;">⚪</span>
+            <span>目标点设置</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="checkPath" style="font-size:1.2em;">⚪</span>
+            <span>路径规划完成</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 目标点设置 -->
+      <div class="slider-group" style="margin-bottom:10px;">
+        <label for="planTarget">🎯 目标点 (x,y)</label>
+        <input id="planTarget" type="text" placeholder="例如: 4500,3200" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.9em; margin-top:8px;">
+        <small style="color:#777;">输入目标坐标，系统将自动规划避障路径</small>
+      </div>
+
+      <!-- 起点控制 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">📍 起点设置</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanSetStart" style="background:#8fd3f4; color:#234; font-size:0.85em;">锁定当前位置</button>
+          <button class="mode-btn" id="btnPlanClearStart" style="background:#d3d3d3; color:#555; font-size:0.85em;">使用实时位置</button>
+        </div>
+        <input id="planStartShow" type="text" readonly placeholder="使用 VIVE 实时坐标" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px; background:#f9f9f9; text-align:center;">
+      </div>
+
+      <!-- 障碍物设置 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">🚧 障碍物配置</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanObsDefault" style="background:#ffe8a1; color:#444; font-size:0.85em;">加载默认</button>
+          <button class="mode-btn" id="btnPlanObs" style="background:#ffd28e; font-size:0.85em;">自定义</button>
+          <button class="mode-btn" id="btnPlanObsOff" style="background:#d3d3d3; color:#555; font-size:0.85em;">禁用</button>
+        </div>
+        <input id="planObs" type="text" placeholder="left,right,top,bottom,margin" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
+        <small style="color:#777;">格式: 左,右,上,下,安全边距(可选)</small>
+      </div>
+
+      <!-- 边界设置 -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:0.9em; color:#666; font-weight:500;">📏 场地边界</label>
+        <div class="mode-btn-group" style="margin-top:6px;">
+          <button class="mode-btn" id="btnPlanBound" style="background:#cde4ff; color:#444; font-size:0.85em;">应用边界</button>
+        </div>
+        <input id="planBound" type="text" value="3920,5100,5700,1390" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
+        <small style="color:#777;">格式: xmin,xmax,ymax,ymin (默认场地尺寸)</small>
+      </div>
+
+      <!-- 执行控制按钮 -->
+      <div class="mode-btn-group" style="margin-top:12px;">
+        <button class="mode-btn" id="btnPlan1" style="background:#92C08E; font-size:1em; font-weight:bold;">
+          ▶️ 开始规划并执行
+        </button>
+        <button class="mode-btn" id="btnPlanStop" style="background:#f4c2c2; font-size:1em; font-weight:bold;">
+          ⏹️ 停止
+        </button>
+      </div>
+    </div>
+
+    <!-- 路径可视化大图 -->
+    <div style="margin-top:15px; padding:12px; background:#f8f9fa; border-radius:12px; border:2px solid #92C08E;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0; font-size:1em; color:#444;">🗺️ 路径预览与实时监控</h3>
+        <small id="pathStatus" style="color:#888; font-weight:600;">等待规划...</small>
+      </div>
+      <canvas id="pathCanvas" width="480" height="400" style="width:100%; max-width:500px; border:2px solid #92C08E; border-radius:8px; background:#fff; display:block; margin:0 auto;"></canvas>
+      <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.8em; color:#666;">
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:3px; background:#68b684;"></span>
+          <span>场地边界</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:12px; background:rgba(255,99,71,0.3); border:1px solid rgba(255,99,71,0.6);"></span>
+          <span>障碍物区域</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:16px; height:3px; background:#3b82f6;"></span>
+          <span>规划路径</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#ff6b35; border-radius:50%;"></span>
+          <span>当前位置</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#666; border-radius:50%;"></span>
+          <span>起点</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px;">
+          <span style="display:inline-block; width:10px; height:10px; background:#1d4ed8; border-radius:50%;"></span>
+          <span>目标点</span>
+        </div>
+      </div>
     </div>
 
     <!-- 本地序列（时间控制直行/转向，不依赖 VIVE） -->
@@ -417,21 +542,21 @@ const char webpage[] PROGMEM = R"rawliteral(
       btnVive.innerText = "Disable VIVE";
       btnVive.style.background = "#ce93d8"; // Soft Purple
       sendCommand("VIVE_ON");
+      configState.viveActive = true;
     } else {
       btnVive.innerText = "Enable VIVE";
       btnVive.style.background = "#E79DC3"; // Pastel Pink
       sendCommand("VIVE_OFF");
+      configState.viveActive = false;
+      configState.pathPlanned = false; // VIVE关闭时清除路径规划状态
     }
+    updateChecklist();
   };
 
   // Manual Planner Switch & Route Sender
   const btnMp = document.getElementById("btnMp");
   const btnSendRoute = document.getElementById("btnSendRoute");
   const routeInput = document.getElementById("routeInput");
-  const btnSeqStart = document.getElementById("btnSeqStart");
-  const btnSeqStop = document.getElementById("btnSeqStop");
-  const btnSendSeq = document.getElementById("btnSendSeq");
-  const seqInput = document.getElementById("seqInput");
   let mpEnabled = false;
 
   btnMp.onclick = () => {
@@ -453,6 +578,393 @@ const char webpage[] PROGMEM = R"rawliteral(
     sendCommand("MP_ROUTE:" + routeStr);
   };
 
+  // New aligned-path mode
+  const btnPlan1 = document.getElementById("btnPlan1");
+  const btnPlanStop = document.getElementById("btnPlanStop");
+  const planTarget = document.getElementById("planTarget");
+  const btnPlanObs = document.getElementById("btnPlanObs");
+  const btnPlanObsOff = document.getElementById("btnPlanObsOff");
+  const planObs = document.getElementById("planObs");
+  const btnPlanObsDefault = document.getElementById("btnPlanObsDefault");
+  const btnPlanBound = document.getElementById("btnPlanBound");
+  const planBound = document.getElementById("planBound");
+  const pathCanvas = document.getElementById("pathCanvas");
+  const pathStatus = document.getElementById("pathStatus");
+  const btnPlanSetStart = document.getElementById("btnPlanSetStart");
+  const btnPlanClearStart = document.getElementById("btnPlanClearStart");
+  const planStartShow = document.getElementById("planStartShow");
+  const btnSeqStart = document.getElementById("btnSeqStart");
+  const btnSeqStop = document.getElementById("btnSeqStop");
+  const btnSendSeq = document.getElementById("btnSendSeq");
+  const seqInput = document.getElementById("seqInput");
+  const btnAttackStart = document.getElementById("btnAttackStart");
+  const btnAttackStop = document.getElementById("btnAttackStop");
+  
+  // Checklist 元素
+  const checkVive = document.getElementById("checkVive");
+  const checkBound = document.getElementById("checkBound");
+  const checkObs = document.getElementById("checkObs");
+  const checkTarget = document.getElementById("checkTarget");
+  const checkPath = document.getElementById("checkPath");
+  
+  // 配置状态追踪
+  let configState = {
+    viveActive: false,
+    boundSet: true,  // 默认边界已设置
+    obsSet: false,
+    targetSet: false,
+    pathPlanned: false
+  };
+  
+  // 更新 Checklist 显示
+  function updateChecklist() {
+    checkVive.innerText = configState.viveActive ? "✅" : "⚪";
+    checkBound.innerText = configState.boundSet ? "✅" : "⚪";
+    checkObs.innerText = configState.obsSet ? "✅" : "⚪";
+    checkTarget.innerText = configState.targetSet ? "✅" : "⚪";
+    checkPath.innerText = configState.pathPlanned ? "✅" : "⚪";
+  }
+
+  // 路径规划按钮处理
+  btnPlan1.onclick = () => {
+    const t = planTarget.value.trim();
+    const c = t.indexOf(",");
+    if (c < 1) { 
+      alert("❌ 请输入目标坐标，格式: x,y\n例如: 4500,3200"); 
+      return; 
+    }
+    if (!configState.viveActive) {
+      alert("⚠️ 请先启用 VIVE 定位系统！");
+      return;
+    }
+    configState.targetSet = true;
+    updateChecklist();
+    sendCommand("PLAN1:" + t);
+    pathStatus.innerText = "规划中...";
+    setTimeout(() => {
+      visualizePath();
+      configState.pathPlanned = true;
+      updateChecklist();
+      pathStatus.innerText = "✅ 路径已规划，执行中";
+    }, 500);
+  };
+  
+  btnPlanStop.onclick = () => {
+    sendCommand("PLAN_STOP");
+    pathStatus.innerText = "⏹️ 已停止";
+  };
+  
+  btnPlanObs.onclick = () => {
+    const obs = planObs.value.trim();
+    if (obs.length === 0) { 
+      alert("❌ 请输入障碍物参数\n格式: left,right,top,bottom,margin\n例如: 4100,4945,4240,3130,150"); 
+      return; 
+    }
+    sendCommand("PLAN_OBS:" + obs);
+    configState.obsSet = true;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "障碍物已更新";
+  };
+  
+  btnPlanObsOff.onclick = () => {
+    sendCommand("PLAN_OBS_OFF");
+    configState.obsSet = false;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "障碍物已禁用";
+  };
+  
+  btnPlanObsDefault.onclick = () => {
+    // 默认障碍: (4100,4945,4240,3130,150)
+    planObs.value = "4100,4945,4240,3130,150";
+    sendCommand("PLAN_OBS:" + planObs.value.trim());
+    configState.obsSet = true;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "✅ 已加载默认障碍物";
+  };
+  
+  btnPlanBound.onclick = () => {
+    const b = planBound.value.trim();
+    const parts = b.split(",");
+    if (parts.length !== 4) { 
+      alert("❌ 请输入边界参数\n格式: xmin,xmax,ymax,ymin\n例如: 3920,5100,5700,1390"); 
+      return; 
+    }
+    sendCommand("PLAN_BOUND:" + b);
+    configState.boundSet = true;
+    updateChecklist();
+    visualizePath();
+    pathStatus.innerText = "✅ 边界已更新";
+  };
+  
+  btnPlanSetStart.onclick = () => {
+    const pose = getCurrentPose();
+    if (pose.x === 0 && pose.y === 0) {
+      alert("⚠️ VIVE 坐标无效，请确保 VIVE 系统正常工作");
+      return;
+    }
+    planStartShow.value = `${pose.x.toFixed(1)},${pose.y.toFixed(1)}`;
+    planStartShow.style.background = "#e3f2fd";
+    planStartShow.style.fontWeight = "600";
+    sendCommand(`PLAN_SET_START:${pose.x},${pose.y}`);
+    visualizePath();
+    pathStatus.innerText = "📍 起点已锁定";
+  };
+  
+  btnPlanClearStart.onclick = () => {
+    planStartShow.value = "使用 VIVE 实时坐标";
+    planStartShow.style.background = "#f9f9f9";
+    planStartShow.style.fontWeight = "normal";
+    sendCommand("PLAN_CLEAR_START");
+    visualizePath();
+    pathStatus.innerText = "📍 切换为实时起点";
+  };
+
+  // ========== 路径可视化 ==========
+  const ctx = pathCanvas.getContext("2d");
+
+  function parseCSV(str, expected) {
+    const parts = str.split(",").map(s => s.trim()).filter(s => s.length > 0);
+    if (expected && parts.length !== expected) return null;
+    return parts.map(parseFloat);
+  }
+
+  function getCurrentPose() {
+    const x = parseFloat(document.getElementById("viveXVal").innerText || "0");
+    const y = parseFloat(document.getElementById("viveYVal").innerText || "0");
+    return { x, y };
+  }
+
+  function computePath(start, target, obs, margin, bound) {
+    // 返回段数组或 null
+    const clamp = (p) => ({
+      x: Math.min(Math.max(p.x, bound.xmin), bound.xmax),
+      y: Math.min(Math.max(p.y, bound.ymin), bound.ymax)
+    });
+    const inside = (p) => (
+      p.x >= bound.xmin && p.x <= bound.xmax && p.y >= bound.ymin && p.y <= bound.ymax
+    );
+    // 仅归一化障碍，不在这里膨胀；避免后续重复加 margin
+    const normObs = () => ({
+      left: Math.min(obs.left, obs.right),
+      right: Math.max(obs.left, obs.right),
+      bottom: Math.min(obs.bottom, obs.top),
+      top: Math.max(obs.bottom, obs.top)
+    });
+    const hit = (seg, box) => {
+      if (insideBox(seg.a, box) || insideBox(seg.b, box)) return true;
+      if (Math.abs(seg.a.y - seg.b.y) < 1e-3) {
+        const y = seg.a.y;
+        if (y >= box.bottom && y <= box.top) {
+          const minx = Math.min(seg.a.x, seg.b.x);
+          const maxx = Math.max(seg.a.x, seg.b.x);
+          if (maxx >= box.left && minx <= box.right) return true;
+        }
+      } else {
+        const x = seg.a.x;
+        if (x >= box.left && x <= box.right) {
+          const miny = Math.min(seg.a.y, seg.b.y);
+          const maxy = Math.max(seg.a.y, seg.b.y);
+          if (maxy >= box.bottom && miny <= box.top) return true;
+        }
+      }
+      return false;
+    };
+    const insideBox = (p, b) => p.x >= b.left && p.x <= b.right && p.y >= b.bottom && p.y <= b.top;
+    const ok = (segs, box) => segs.every(s => inside(s.a) && inside(s.b) && !hit(s, box));
+
+    let S = clamp(start);
+    let T = clamp(target);
+    // 膨胀一次障碍，供碰撞检测使用
+    const base = normObs();
+    const box = {
+      left: base.left - margin,
+      right: base.right + margin,
+      bottom: base.bottom - margin,
+      top: base.top + margin
+    };
+
+    const segs = [];
+    // X->Y
+    segs[0] = { a: S, b: { x: T.x, y: S.y } };
+    segs[1] = { a: segs[0].b, b: T };
+    if (ok(segs, box)) return segs.slice(0, 2);
+    // Y->X
+    segs[0] = { a: S, b: { x: S.x, y: T.y } };
+    segs[1] = { a: segs[0].b, b: T };
+    if (ok(segs, box)) return segs.slice(0, 2);
+
+    // 绕障拐点只基于已膨胀后的 box，不再二次加 margin
+    const Y_top = Math.min(Math.max(box.top, bound.ymin), bound.ymax);
+    const Y_bottom = Math.min(Math.max(box.bottom, bound.ymin), bound.ymax);
+    const X_left = Math.min(Math.max(box.left, bound.xmin), bound.xmax);
+    const X_right = Math.min(Math.max(box.right, bound.xmin), bound.xmax);
+
+    const detours = [
+      [ {a:S, b:{x:S.x, y:Y_top}}, {a:{x:S.x, y:Y_top}, b:{x:T.x, y:Y_top}}, {a:{x:T.x, y:Y_top}, b:T} ],
+      [ {a:S, b:{x:S.x, y:Y_bottom}}, {a:{x:S.x, y:Y_bottom}, b:{x:T.x, y:Y_bottom}}, {a:{x:T.x, y:Y_bottom}, b:T} ],
+      [ {a:S, b:{x:X_left, y:S.y}}, {a:{x:X_left, y:S.y}, b:{x:X_left, y:T.y}}, {a:{x:X_left, y:T.y}, b:T} ],
+      [ {a:S, b:{x:X_right, y:S.y}}, {a:{x:X_right, y:S.y}, b:{x:X_right, y:T.y}}, {a:{x:X_right, y:T.y}, b:T} ],
+    ];
+    for (const d of detours) {
+      if (ok(d, box)) return d;
+    }
+    return null;
+  }
+
+  function drawPath(segs, obs, margin, bound, start, target) {
+    const w = pathCanvas.width, h = pathCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    const scaleX = w / (bound.xmax - bound.xmin);
+    const scaleY = h / (bound.ymax - bound.ymin);
+    const tx = (x) => (x - bound.xmin) * scaleX;
+    const ty = (y) => h - (y - bound.ymin) * scaleY;
+
+    // 边界
+    ctx.strokeStyle = "#68b684";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, 0, w, h);
+
+    // 绘制网格（帮助定位）
+    ctx.strokeStyle = "#e0e0e0";
+    ctx.lineWidth = 1;
+    const gridStepX = (bound.xmax - bound.xmin) / 5;
+    const gridStepY = (bound.ymax - bound.ymin) / 5;
+    for (let i = 1; i < 5; i++) {
+      const gx = tx(bound.xmin + gridStepX * i);
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, h);
+      ctx.stroke();
+    }
+    for (let i = 1; i < 5; i++) {
+      const gy = ty(bound.ymin + gridStepY * i);
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    // 障碍+margin
+    if (configState.obsSet) {
+      const box = {
+        left: Math.min(obs.left, obs.right) - margin,
+        right: Math.max(obs.left, obs.right) + margin,
+        bottom: Math.min(obs.bottom, obs.top) - margin,
+        top: Math.max(obs.bottom, obs.top) + margin
+      };
+      ctx.fillStyle = "rgba(255,99,71,0.25)";
+      ctx.strokeStyle = "rgba(255,99,71,0.8)";
+      ctx.lineWidth = 2;
+      const ox = tx(box.left), oy = ty(box.top);
+      const ow = (box.right - box.left) * scaleX;
+      const oh = (box.top - box.bottom) * scaleY;
+      ctx.fillRect(ox, oy, ow, oh);
+      ctx.strokeRect(ox, oy, ow, oh);
+    }
+
+    // 规划路径
+    if (segs) {
+      ctx.strokeStyle = "#3b82f6";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(tx(segs[0].a.x), ty(segs[0].a.y));
+      segs.forEach(s => ctx.lineTo(tx(s.b.x), ty(s.b.y)));
+      ctx.stroke();
+      
+      // 绘制路径节点
+      ctx.fillStyle = "#3b82f6";
+      segs.forEach(s => {
+        ctx.beginPath();
+        ctx.arc(tx(s.b.x), ty(s.b.y), 3, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    // 绘制点的辅助函数
+    const drawDot = (p, color, size = 5, label = "") => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(tx(p.x), ty(p.y), size, 0, Math.PI * 2);
+      ctx.fill();
+      // 添加白色边框使其更明显
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      
+      // 添加标签
+      if (label) {
+        ctx.fillStyle = color;
+        ctx.font = "bold 11px Arial";
+        ctx.fillText(label, tx(p.x) + size + 4, ty(p.y) + 4);
+      }
+    };
+    
+    // 起点（灰色）
+    drawDot(start, "#666", 6, "起点");
+    
+    // 目标点（蓝色）
+    if (configState.targetSet) {
+      drawDot(target, "#1d4ed8", 6, "目标");
+    }
+    
+    // 当前位置（橙色，实时更新）
+    const current = getCurrentPose();
+    if (current.x !== 0 || current.y !== 0) {
+      drawDot(current, "#ff6b35", 7, "当前");
+    }
+  }
+
+  function visualizePath() {
+    // 获取边界
+    const bArr = parseCSV(planBound.value.trim(), 4);
+    if (!bArr) { 
+      pathStatus.innerText = "❌ 边界格式错误"; 
+      return; 
+    }
+    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
+    
+    // 获取起点
+    const pose = (planStartShow.value && planStartShow.value !== "使用 VIVE 实时坐标")
+      ? (() => { 
+          const p = parseCSV(planStartShow.value, 2); 
+          return p ? { x:p[0], y:p[1] } : getCurrentPose(); 
+        })()
+      : getCurrentPose();
+    
+    // 获取目标点（可选）
+    const t = parseCSV(planTarget.value.trim(), 2);
+    const target = t ? { x: t[0], y: t[1] } : null;
+    
+    // 获取障碍物（可选）
+    const obsArr = parseCSV(planObs.value.trim());
+    const obs = (obsArr && obsArr.length >= 4) ? {
+      left: obsArr[0], right: obsArr[1], top: obsArr[2], bottom: obsArr[3]
+    } : { left:0, right:0, top:0, bottom:0 };
+    const margin = (obsArr && obsArr.length >= 5) ? obsArr[4] : 0;
+    
+    // 如果有目标点，尝试规划路径
+    let segs = null;
+    if (target) {
+      segs = computePath(pose, target, obs, margin, bound);
+      if (!segs) {
+        pathStatus.innerText = "⚠️ 无可行路径";
+      }
+    }
+    
+    // 无论是否有路径，都绘制当前状态
+    drawPath(segs, obs, margin, bound, pose, target);
+    
+    // 更新状态文本
+    if (!target) {
+      pathStatus.innerText = "等待设置目标点...";
+    } else if (segs) {
+      pathStatus.innerText = `✅ 路径规划完成 (${segs.length}段)`;
+    }
+  }
+
   // Manual planner param update helper
   function sendMpParam(key, val) {
     sendCommand("MP_PARAM:" + key + "=" + val);
@@ -466,6 +978,23 @@ const char webpage[] PROGMEM = R"rawliteral(
   };
   btnSeqStart.onclick = () => sendCommand("SEQ_START");
   btnSeqStop.onclick = () => sendCommand("SEQ_STOP");
+
+  // Attack servo control
+  let attackOn = false;
+  btnAttackStart.onclick = () => {
+    attackOn = true;
+    btnAttackStart.innerText = "Attacking...";
+    btnAttackStart.style.background = "#e57373";
+    btnAttackStop.style.background = "#b5d8f7";
+    sendCommand("SV1");
+  };
+  btnAttackStop.onclick = () => {
+    attackOn = false;
+    btnAttackStart.innerText = "Start Attack";
+    btnAttackStart.style.background = "#f7b5b5";
+    btnAttackStop.style.background = "#90caf9";
+    sendCommand("SV0");
+  };
 
   // State
   let isMoving = false;
@@ -640,6 +1169,17 @@ const char webpage[] PROGMEM = R"rawliteral(
         document.getElementById("viveXVal").innerText = parseFloat(data.x).toFixed(1);
         document.getElementById("viveYVal").innerText = parseFloat(data.y).toFixed(1);
         document.getElementById("viveAngleVal").innerText = parseFloat(data.angle).toFixed(1);
+        
+        // 检查VIVE是否正常工作（两个tracker都有信号）
+        const viveWorking = data.status && (data.status.front >= 2 && data.status.back >= 2);
+        if (viveWorking && !configState.viveActive) {
+          configState.viveActive = true;
+          updateChecklist();
+        } else if (!viveWorking && configState.viveActive) {
+          configState.viveActive = false;
+          updateChecklist();
+        }
+        
         if (data.frontRaw && data.backRaw) {
           document.getElementById("frontRawX").innerText = data.frontRaw.x || 0;
           document.getElementById("frontRawY").innerText = data.frontRaw.y || 0;
@@ -661,6 +1201,71 @@ const char webpage[] PROGMEM = R"rawliteral(
   }
 
   setInterval(updateViveData, 1000);
+  
+  // 定时更新路径可视化（实时显示当前位置）
+  setInterval(() => {
+    if (configState.pathPlanned && configState.targetSet) {
+      visualizePath();
+    }
+  }, 2000);  // 每2秒更新一次路径显示
+  
+  // 监听目标点输入
+  planTarget.addEventListener('input', () => {
+    const val = planTarget.value.trim();
+    if (val.indexOf(",") > 0) {
+      configState.targetSet = true;
+      configState.pathPlanned = false;
+      updateChecklist();
+      visualizePath();  // 预览目标点位置
+    } else {
+      configState.targetSet = false;
+      configState.pathPlanned = false;
+      updateChecklist();
+    }
+  });
+  
+  // 监听障碍物输入
+  planObs.addEventListener('input', () => {
+    const val = planObs.value.trim();
+    if (val.split(",").length >= 4) {
+      visualizePath();  // 实时预览障碍物
+    }
+  });
+  
+  // Canvas点击设置目标点功能
+  pathCanvas.addEventListener('click', (e) => {
+    const rect = pathCanvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // 转换canvas坐标到场地坐标
+    const bArr = parseCSV(planBound.value.trim(), 4);
+    if (!bArr) return;
+    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
+    
+    const w = pathCanvas.width, h = pathCanvas.height;
+    const scaleX = w / (bound.xmax - bound.xmin);
+    const scaleY = h / (bound.ymax - bound.ymin);
+    
+    const worldX = Math.round(bound.xmin + (x / rect.width) * w / scaleX);
+    const worldY = Math.round(bound.ymax - (y / rect.height) * h / scaleY);
+    
+    planTarget.value = `${worldX},${worldY}`;
+    configState.targetSet = true;
+    configState.pathPlanned = false;
+    updateChecklist();
+    visualizePath();
+    
+    pathStatus.innerText = `🎯 目标点已选择: (${worldX}, ${worldY})`;
+  });
+  
+  // 初始化 checklist
+  updateChecklist();
+  
+  // 初始可视化（显示边界和默认设置）
+  setTimeout(() => {
+    visualizePath();
+  }, 1000);
 
   // 参数调整面板切换
   const paramToggle = document.getElementById("paramToggle");

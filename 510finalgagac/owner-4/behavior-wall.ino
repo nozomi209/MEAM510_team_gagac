@@ -16,6 +16,9 @@ static bool isValid(uint16_t d) { return (d > 1 && d < 3000); }
 // 前方避障参数
 uint16_t FRONT_TURN_TH   = 250;   // 前方避障距离 (17cm)
 uint16_t FRONT_BACKUP_TH = 50;    // 紧急倒车距离 (5cm)
+uint8_t  FRONT_CONFIRM_FRAMES = 3; // 连续 N 帧才认定前方有障碍
+uint16_t FRONT_SLOPE_SUPPRESS_MAX = 400; // 下坡假障碍抑制上限（只靠前向突降判据）
+uint16_t FRONT_DROP_GUARD_MM = 120;      // 单帧突降超过该值先忽略一帧
 
 // 巡墙距离参数
 float WALL_TOO_CLOSE      = 50.0f;  // <6cm: 太近 (危险)
@@ -57,6 +60,9 @@ unsigned long SEQ_STUCK_TURN_MS = 100;
 void updateWallParam(const String& paramName, float value) {
     if (paramName == "FRONT_TURN_TH") FRONT_TURN_TH = (uint16_t)value;
     else if (paramName == "FRONT_BACKUP_TH") FRONT_BACKUP_TH = (uint16_t)value;
+    else if (paramName == "FRONT_CONFIRM_FRAMES") FRONT_CONFIRM_FRAMES = (uint8_t)value;
+    else if (paramName == "FRONT_SLOPE_SUPPRESS_MAX") FRONT_SLOPE_SUPPRESS_MAX = (uint16_t)value;
+    else if (paramName == "FRONT_DROP_GUARD_MM") FRONT_DROP_GUARD_MM = (uint16_t)value;
     else if (paramName == "WALL_TOO_CLOSE") WALL_TOO_CLOSE = value;
     else if (paramName == "WALL_IDEAL") WALL_IDEAL = value;
     else if (paramName == "WALL_TOO_FAR") WALL_TOO_FAR = value;
@@ -99,6 +105,11 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     static bool isStuckSequenceActive = false;
     static unsigned long stuckStartTime = 0;
 
+    // 下坡/抖动抑制用的前方滤波与计数
+    static float F_filt = 5000.0f;
+    static float F_prev = 5000.0f;
+    static uint8_t frontLowCount = 0;
+
     // 1. 数据预处理
     bool hasF  = isValid(F_raw);
     bool hasR1 = isValid(R1_raw);
@@ -110,6 +121,17 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     float R1 = hasR1 ? R1_raw : 5000.0f;
     float R2 = hasR2 ? R2_raw : 5000.0f; 
     bool isHeadOut = (R1 > RIGHT_LOST_WALL); 
+
+    // 前向距离低通 + 单帧突降守门：只有前向可用时，以时间连续性抑制下坡假障碍
+    F_filt = 0.6f * F_filt + 0.4f * F;
+    if ((F_prev - F_filt) > FRONT_DROP_GUARD_MM && F_filt < FRONT_SLOPE_SUPPRESS_MAX) {
+        // 认为是姿态/抖动造成的瞬时突降，先不触发，拉回到上次值
+        F_filt = F_prev;
+    }
+    float F_use = (F < F_filt) ? F : F_filt; // 贴脸保护仍看原始更小值
+    frontLowCount = (F_filt < FRONT_TURN_TH) ? (uint8_t)(frontLowCount + 1) : 0;
+    bool frontConfirmed = frontLowCount >= FRONT_CONFIRM_FRAMES;
+    F_prev = F_filt;
 
 
     // ================= [优先级 1] 卡死脱困序列 (倒车 -> 旋转) =================
@@ -146,7 +168,7 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     // ================= [优先级 2] 常规动作 =================
 
     // 0. 贴脸保护 (距离 < 5cm)
-    if (F < FRONT_BACKUP_TH) {
+    if (F_use < FRONT_BACKUP_TH) {
         if (!isBackingUp) { isBackingUp = true; backupStartTime = millis(); }
         if (millis() - backupStartTime > MAX_BACKUP_MS) { 
             // 倒车超时 -> 强制转弯序列
@@ -159,7 +181,7 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     } else { isBackingUp = false; }
 
     // 1. 前方避障序列 (停 -> 盲转 -> 停)
-    if (F <= FRONT_TURN_TH && R1<= 120.0F || isFrontTurnSequenceActive) { ////要改这里！！！！
+    if ((frontConfirmed && F_filt <= FRONT_TURN_TH && R1 <= 120.0F) || isFrontTurnSequenceActive) {
         if (!isFrontTurnSequenceActive) { isFrontTurnSequenceActive = true; frontSeqStage = 1; stageStartTime = millis(); }
         unsigned long dt = millis() - stageStartTime;
 
@@ -182,8 +204,8 @@ String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
     }
 
 
-    if (F <= FRONT_TURN_TH && R1> 120.0F || isFrontTurnSequenceActive) {
-        return "R" + String(TURN_HARD_FIND);
+    if (frontConfirmed && F_filt <= FRONT_TURN_TH && R1 > 120.0F) {
+        return "R" + String(TURN_HARD_FIND); // 前方近、右侧空：大幅右找出口
     }
 
     // 2. 出胡同序列 (防撞角: 直行 -> 猛拐 -> 停)

@@ -503,7 +503,7 @@ void handleCommand(String cmd) {
 
 
 
-    ///到时候网页要加button
+    // 攻击伺服：网页“Start/Stop Attack”按钮下发 SV1 / SV0
     else if (cmd.startsWith("SV")) {
             int val = cmd.substring(2).toInt(); 
             
@@ -636,10 +636,18 @@ void setup() {
             Serial.println("Sent AUTO_OFF to Owner");
             stopMotors(); // 顺便让车停下
         }
-        // 手动规划开关/路线下发
+        // 手动规划开关/路线下发（传统Route方式）
         else if (data == "MP_ON" || data == "MP_OFF" || data.startsWith("MP_ROUTE:")) {
             OwnerSerial.println(data);
             Serial.printf("Sent %s to Owner (manual planner)\n", data.c_str());
+        }
+        // 新的路径规划命令（Plan to Target方式）
+        else if (data.startsWith("PLAN1:") || data == "PLAN_STOP" || 
+                 data.startsWith("PLAN_OBS:") || data == "PLAN_OBS_OFF" ||
+                 data.startsWith("PLAN_BOUND:") || 
+                 data.startsWith("PLAN_SET_START:") || data == "PLAN_CLEAR_START") {
+            OwnerSerial.println(data);
+            Serial.printf("Sent %s to Owner (path planner)\n", data.c_str());
         }
         // 手动规划参数下发
         else if (data.startsWith("MP_PARAM:")) {
@@ -972,6 +980,7 @@ void loop() {
 
 
     // --- Attack Loop Logic (Non-blocking) ---
+    // 每 1 秒在 0/180 度间往返一次，SV0 会立即归位并停止
     if (isAttacking) {
         // 检查是否过去了 1000ms (1秒)
         if (millis() - lastAttackTime > 1000) {
