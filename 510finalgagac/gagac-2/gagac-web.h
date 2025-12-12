@@ -12,17 +12,19 @@ const char webpage[] PROGMEM = R"rawliteral(
     font-family: "Poppins", sans-serif;
     display: flex;
     justify-content: center;
-    align-items: center;
-    height: 100vh;
+    align-items: flex-start;
+    min-height: 100vh;
     margin: 0;
+    padding: 20px 0;
   }
   .control-card {
     background: #fff;
     border-radius: 24px;
     box-shadow: 0 12px 30px rgba(0,0,0,0.08);
-    padding: 30px;
+    padding: 24px;
     width: 320px;
     text-align: center;
+    margin-top: 10px;
   }
   h2 {
     color: #444;
@@ -124,6 +126,10 @@ const char webpage[] PROGMEM = R"rawliteral(
     font-size: 0.75em;
     margin-top: 25px;
   }
+  @media (max-height: 700px) {
+    body { padding: 10px 0; }
+    .control-card { padding: 20px; width: 95vw; max-width: 360px; }
+  }
 </style>
 </head>
 
@@ -163,6 +169,39 @@ const char webpage[] PROGMEM = R"rawliteral(
       <button class="mode-btn" id="btnVive" style="background:#E79DC3;">
         Enable VIVE
       </button>
+    </div>
+
+    <!-- 手动规划控制 -->
+    <div class="mode-btn-group" style="margin-top:10px;">
+      <button class="mode-btn" id="btnMp" style="background:#9fc5e8;">
+        Start Manual Plan
+      </button>
+      <button class="mode-btn" id="btnSendRoute" style="background:#a4d7a7;">
+        Send Route
+      </button>
+    </div>
+    <div class="slider-group" style="margin-top:10px;">
+      <label for="routeInput">Route (x,y,heading,bumps;...)</label>
+      <textarea id="routeInput" style="width:100%; height:70px; margin-top:8px; border-radius:10px; border:1px solid #ddd; padding:8px; font-size:0.9em;">5120,4080,90,0;4661,4164,180,0;4661,4164,-90,1;4500,5800,90,4</textarea>
+      <small style="color:#777;">示例: x,y,heading,bumps 多组用分号分隔</small>
+    </div>
+
+    <!-- 本地序列（时间控制直行/转向，不依赖 VIVE） -->
+    <div class="mode-btn-group" style="margin-top:10px;">
+      <button class="mode-btn" id="btnSeqStart" style="background:#ffa94d;">
+        Start Sequence
+      </button>
+      <button class="mode-btn" id="btnSeqStop" style="background:#f08080;">
+        Stop Sequence
+      </button>
+    </div>
+    <div class="slider-group" style="margin-top:10px;">
+      <label for="seqInput">Sequence (MODE,SPEED/Degree,DurationMs;...)</label>
+      <textarea id="seqInput" style="width:100%; height:70px; margin-top:8px; border-radius:10px; border:1px solid #ddd; padding:8px; font-size:0.9em;">F,50,5600;S,0,100;L,100,1500</textarea>
+      <small style="color:#777;">模式 F/B/L/R/S（S=暂停/停车），数值=速度或转向力度，持续时间 ms；用分号分隔。示例：F,50,2000;S,0,500;L,80,600;F,50,1500</small>
+      <div style="margin-top:8px; display:flex; gap:10px;">
+        <button class="mode-btn" id="btnSendSeq" style="flex:1; background:#a4d7a7;">Send Sequence</button>
+      </div>
     </div>
 
     <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
@@ -249,7 +288,7 @@ const char webpage[] PROGMEM = R"rawliteral(
           <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">转向力度</h4>
           <div class="slider-group" style="margin-bottom: 10px;">
             <label>原地旋转: <span id="turnSpinVal">120</span></label>
-            <input type="range" id="turnSpin" min="50" max="200" value="120" step="10">
+            <input type="range" id="turnSpin" min="50" max="200" value="102" step="2">
           </div>
           <div class="slider-group" style="margin-bottom: 10px;">
             <label>左转修正: <span id="turnCorrectVal">12</span></label>
@@ -260,12 +299,57 @@ const char webpage[] PROGMEM = R"rawliteral(
             <input type="range" id="turnGentle" min="5" max="50" value="12" step="1">
           </div>
           <div class="slider-group" style="margin-bottom: 10px;">
-            <label>强力找墙: <span id="turnHardFindVal">120</span></label>
-            <input type="range" id="turnHardFind" min="50" max="200" value="120" step="10">
+            <label>强力找墙: <span id="turnHardFindVal">100</span></label>
+            <input type="range" id="turnHardFind" min="50" max="200" value="100" step="5">
           </div>
           <div class="slider-group">
             <label>微调力度: <span id="turnTinyVal">10</span></label>
             <input type="range" id="turnTiny" min="5" max="30" value="10" step="1">
+          </div>
+        </div>
+
+        <!-- 时间参数 -->
+        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
+          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">时间参数 (ms)</h4>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>卡死检测周期: <span id="stallCheckTimeVal">2000</span>ms</label>
+            <input type="range" id="stallCheckTime" min="500" max="4000" value="2000" step="100">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>出胡同直行: <span id="seqExitStraightVal">700</span>ms</label>
+            <input type="range" id="seqExitStraight" min="100" max="2000" value="700" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>出胡同转弯: <span id="seqExitTurnVal">200</span>ms</label>
+            <input type="range" id="seqExitTurn" min="50" max="1500" value="200" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>出胡同停车: <span id="seqExitStopVal">100</span>ms</label>
+            <input type="range" id="seqExitStop" min="50" max="1000" value="100" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前方避障倒车: <span id="seqFrontBackVal">300</span>ms</label>
+            <input type="range" id="seqFrontBack" min="50" max="1500" value="300" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前方避障预停: <span id="seqFrontPreStopVal">100</span>ms</label>
+            <input type="range" id="seqFrontPreStop" min="50" max="1000" value="100" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前方避障转向: <span id="seqFrontTurnVal">500</span>ms</label>
+            <input type="range" id="seqFrontTurn" min="100" max="2000" value="500" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>前方避障后停: <span id="seqFrontPostStopVal">100</span>ms</label>
+            <input type="range" id="seqFrontPostStop" min="50" max="1000" value="100" step="50">
+          </div>
+          <div class="slider-group" style="margin-bottom: 10px;">
+            <label>卡死倒车: <span id="seqStuckBackVal">800</span>ms</label>
+            <input type="range" id="seqStuckBack" min="100" max="2000" value="800" step="50">
+          </div>
+          <div class="slider-group">
+            <label>卡死旋转: <span id="seqStuckTurnVal">100</span>ms</label>
+            <input type="range" id="seqStuckTurn" min="50" max="1000" value="100" step="50">
           </div>
         </div>
       </div>
@@ -340,6 +424,49 @@ const char webpage[] PROGMEM = R"rawliteral(
     }
   };
 
+  // Manual Planner Switch & Route Sender
+  const btnMp = document.getElementById("btnMp");
+  const btnSendRoute = document.getElementById("btnSendRoute");
+  const routeInput = document.getElementById("routeInput");
+  const btnSeqStart = document.getElementById("btnSeqStart");
+  const btnSeqStop = document.getElementById("btnSeqStop");
+  const btnSendSeq = document.getElementById("btnSendSeq");
+  const seqInput = document.getElementById("seqInput");
+  let mpEnabled = false;
+
+  btnMp.onclick = () => {
+    mpEnabled = !mpEnabled;
+    if (mpEnabled) {
+      btnMp.innerText = "Stop Manual Plan";
+      btnMp.style.background = "#f4a261";
+      sendCommand("MP_ON");
+    } else {
+      btnMp.innerText = "Start Manual Plan";
+      btnMp.style.background = "#9fc5e8";
+      sendCommand("MP_OFF");
+    }
+  };
+
+  btnSendRoute.onclick = () => {
+    const routeStr = routeInput.value.trim();
+    if (routeStr.length === 0) return;
+    sendCommand("MP_ROUTE:" + routeStr);
+  };
+
+  // Manual planner param update helper
+  function sendMpParam(key, val) {
+    sendCommand("MP_PARAM:" + key + "=" + val);
+  }
+
+  // Sequence control (local timed straight/turn)
+  btnSendSeq.onclick = () => {
+    const seq = seqInput.value.trim();
+    if (seq.length === 0) return;
+    sendCommand("SEQ:" + seq);
+  };
+  btnSeqStart.onclick = () => sendCommand("SEQ_START");
+  btnSeqStop.onclick = () => sendCommand("SEQ_STOP");
+
   // State
   let isMoving = false;
   let currentMoveDirection = null;    
@@ -357,7 +484,7 @@ const char webpage[] PROGMEM = R"rawliteral(
   };
 
   function sendCommand(cmd) {
-    fetch("/cmd?data=" + cmd).catch(err => console.log(err));
+    fetch("/cmd?data=" + encodeURIComponent(cmd)).catch(err => console.log(err));
   }
 
   // Adjust Speed slider (Q/W)
@@ -538,6 +665,22 @@ const char webpage[] PROGMEM = R"rawliteral(
   // 参数调整面板切换
   const paramToggle = document.getElementById("paramToggle");
   const paramPanel = document.getElementById("paramPanel");
+  // 手动规划参数面板
+  const mpParamToggle = document.createElement("button");
+  mpParamToggle.id = "mpParamToggle";
+  mpParamToggle.innerText = "展开";
+  mpParamToggle.style = "background:#92C08E;border:none;color:white;padding:5px 15px;border-radius:8px;cursor:pointer;font-size:0.8em;";
+
+  const mpParamPanel = document.createElement("div");
+  mpParamPanel.id = "mpParamPanel";
+  mpParamPanel.style.display = "none";
+  mpParamPanel.innerHTML = `
+    <div style="margin-top:15px; padding:10px; background:#f8f9fa; border-radius:8px;">
+      <h4 style="font-size:0.85em; color:#666; margin:0 0 10px 0;">手动规划参数</h4>
+      <div id="mpParamSliders"></div>
+    </div>
+  `;
+
   paramToggle.onclick = () => {
     if (paramPanel.style.display === "none") {
       paramPanel.style.display = "block";
@@ -562,7 +705,28 @@ const char webpage[] PROGMEM = R"rawliteral(
     "TURN_CORRECT": { slider: document.getElementById("turnCorrect"), val: document.getElementById("turnCorrectVal") },
     "TURN_GENTLE": { slider: document.getElementById("turnGentle"), val: document.getElementById("turnGentleVal") },
     "TURN_HARD_FIND": { slider: document.getElementById("turnHardFind"), val: document.getElementById("turnHardFindVal") },
-    "TURN_TINY": { slider: document.getElementById("turnTiny"), val: document.getElementById("turnTinyVal") }
+    "TURN_TINY": { slider: document.getElementById("turnTiny"), val: document.getElementById("turnTinyVal") },
+    "STALL_CHECK_TIME": { slider: document.getElementById("stallCheckTime"), val: document.getElementById("stallCheckTimeVal") },
+    "SEQ_EXIT_STRAIGHT_MS": { slider: document.getElementById("seqExitStraight"), val: document.getElementById("seqExitStraightVal") },
+    "SEQ_EXIT_TURN_MS": { slider: document.getElementById("seqExitTurn"), val: document.getElementById("seqExitTurnVal") },
+    "SEQ_EXIT_STOP_MS": { slider: document.getElementById("seqExitStop"), val: document.getElementById("seqExitStopVal") },
+    "SEQ_FRONT_BACK_MS": { slider: document.getElementById("seqFrontBack"), val: document.getElementById("seqFrontBackVal") },
+    "SEQ_FRONT_PRE_STOP_MS": { slider: document.getElementById("seqFrontPreStop"), val: document.getElementById("seqFrontPreStopVal") },
+    "SEQ_FRONT_TURN_MS": { slider: document.getElementById("seqFrontTurn"), val: document.getElementById("seqFrontTurnVal") },
+    "SEQ_FRONT_POST_STOP_MS": { slider: document.getElementById("seqFrontPostStop"), val: document.getElementById("seqFrontPostStopVal") },
+    "SEQ_STUCK_BACK_MS": { slider: document.getElementById("seqStuckBack"), val: document.getElementById("seqStuckBackVal") },
+    "SEQ_STUCK_TURN_MS": { slider: document.getElementById("seqStuckTurn"), val: document.getElementById("seqStuckTurnVal") }
+  };
+
+  // Manual planner sliders (VIVE 点对点)
+  const mpSliders = {
+    "MP_DIST_TOL": { id: "mpDistTol", label: "mpDistTolVal", min: 20, max: 150, step: 5, def: 50 },
+    "MP_ANGLE_TOL": { id: "mpAngleTol", label: "mpAngleTolVal", min: 5, max: 45, step: 1, def: 15 },
+    "MP_SPEED_FAR": { id: "mpSpeedFar", label: "mpSpeedFarVal", min: 20, max: 100, step: 5, def: 70 },
+    "MP_SPEED_NEAR": { id: "mpSpeedNear", label: "mpSpeedNearVal", min: 10, max: 80, step: 5, def: 40 },
+    "MP_TURN_RATE": { id: "mpTurnRate", label: "mpTurnRateVal", min: 30, max: 150, step: 5, def: 80 },
+    "MP_BUMP_FWD_MS": { id: "mpBumpFwd", label: "mpBumpFwdVal", min: 100, max: 1500, step: 50, def: 500 },
+    "MP_BUMP_STOP_MS": { id: "mpBumpStop", label: "mpBumpStopVal", min: 50, max: 1000, step: 50, def: 300 }
   };
 
   // 初始化所有参数滑块
@@ -578,6 +742,67 @@ const char webpage[] PROGMEM = R"rawliteral(
       };
     }
   }
+
+  // 在页面末尾追加 MP 参数面板
+  (function mountMpPanel() {
+    const modeGroup = document.querySelector(".mode-btn-group");
+    const card = document.querySelector(".control-card");
+    if (card) {
+      const wrapper = document.createElement("div");
+      wrapper.style.marginTop = "10px";
+      wrapper.style.paddingTop = "10px";
+      wrapper.style.borderTop = "1px solid #f0f0f0";
+      const titleRow = document.createElement("div");
+      titleRow.style.display = "flex";
+      titleRow.style.justifyContent = "space-between";
+      titleRow.style.alignItems = "center";
+      titleRow.style.marginBottom = "10px";
+      const h3 = document.createElement("h3");
+      h3.style = "font-size:0.9em;color:#888;margin:0;font-weight:500;";
+      h3.innerText = "手动规划参数";
+      titleRow.appendChild(h3);
+      titleRow.appendChild(mpParamToggle);
+      wrapper.appendChild(titleRow);
+      wrapper.appendChild(mpParamPanel);
+      card.appendChild(wrapper);
+    }
+  })();
+
+  mpParamToggle.onclick = () => {
+    if (mpParamPanel.style.display === "none") {
+      mpParamPanel.style.display = "block";
+      mpParamToggle.innerText = "收起";
+    } else {
+      mpParamPanel.style.display = "none";
+      mpParamToggle.innerText = "展开";
+    }
+  };
+
+  // 渲染 MP 参数滑块
+  (function renderMpSliders() {
+    const container = document.getElementById("mpParamSliders");
+    if (!container) return;
+    for (const [k, cfg] of Object.entries(mpSliders)) {
+      const div = document.createElement("div");
+      div.className = "slider-group";
+      div.style.marginBottom = "10px";
+      div.innerHTML = `
+        <label>${k}: <span id="${cfg.label}">${cfg.def}</span></label>
+        <input type="range" id="${cfg.id}" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${cfg.def}">
+      `;
+      container.appendChild(div);
+      const slider = document.getElementById(cfg.id);
+      const valLab = document.getElementById(cfg.label);
+      if (slider && valLab) {
+        slider.oninput = function() {
+          valLab.innerText = this.value;
+          updateSliderBackground(this);
+          sendMpParam(k, this.value);
+        };
+        updateSliderBackground(slider);
+      }
+    }
+  })();
 </script>
 </body>
 </html>

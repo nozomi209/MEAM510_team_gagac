@@ -111,6 +111,87 @@ int pwmOutputR = 0;
 hw_timer_t *controlTimer = NULL;
 volatile bool controlFlag = false;
 
+// ======= 简单序列执行（直行/转向按时间顺序执行，纯网页控制用） =======
+struct SeqStep {
+    char mode;         // 'F','B','L','R'
+    float value;       // speed or turn rate
+    uint32_t duration; // ms
+};
+const uint8_t SEQ_MAX = 16;
+SeqStep seqSteps[SEQ_MAX];
+uint8_t seqCount = 0;
+uint8_t seqIndex = 0;
+bool seqActive = false;
+uint32_t seqStartMs = 0;
+bool seqPaused = false;
+
+void seqStop() {
+    seqActive = false;
+    seqPaused = false;
+    seqIndex = 0;
+    seqCount = seqCount; // keep last loaded
+    stopMotors();
+}
+
+void seqApplyStep(const SeqStep& s) {
+    switch (s.mode) {
+        case 'F': setCarSpeed(s.value); break;
+        case 'B': setCarSpeed(-s.value); break;
+        case 'L': setCarTurn(50, -s.value); break;
+        case 'R': setCarTurn(50, s.value); break;
+        case 'S': stopMotors(); break; // 停车保持一段时间
+        default: stopMotors(); break;
+    }
+}
+
+bool seqParse(const String& payload) {
+    seqCount = 0;
+    int start = 0;
+    String s = payload;
+    while (start < s.length() && seqCount < SEQ_MAX) {
+        int sep = s.indexOf(';', start);
+        String item = (sep == -1) ? s.substring(start) : s.substring(start, sep);
+        item.trim();
+        if (item.length() == 0) { if (sep == -1) break; start = sep + 1; continue; }
+        int c1 = item.indexOf(',');
+        int c2 = item.indexOf(',', c1 + 1);
+        if (c1 < 0 || c2 < 0) { if (sep == -1) break; start = sep + 1; continue; }
+        SeqStep st;
+        st.mode = toupper(item.substring(0, c1)[0]);
+        st.value = item.substring(c1 + 1, c2).toFloat();
+        st.duration = (uint32_t)item.substring(c2 + 1).toInt();
+        seqSteps[seqCount++] = st;
+        if (sep == -1) break;
+        start = sep + 1;
+    }
+    seqIndex = 0;
+    return seqCount > 0;
+}
+
+void seqStart() {
+    if (seqCount == 0) return;
+    seqActive = true;
+    seqPaused = false;
+    seqIndex = 0;
+    seqStartMs = millis();
+    seqApplyStep(seqSteps[0]);
+}
+
+void seqProcess() {
+    if (!seqActive || seqPaused || seqCount == 0) return;
+    uint32_t now = millis();
+    SeqStep& cur = seqSteps[seqIndex];
+    if (now - seqStartMs >= cur.duration) {
+        seqIndex++;
+        if (seqIndex >= seqCount) {
+            seqStop();
+            return;
+        }
+        seqStartMs = now;
+        seqApplyStep(seqSteps[seqIndex]);
+    }
+}
+
 //VIVE 默认开启（便于直接读坐标）
 bool isViveActive = true;
 bool isViveTestMode = false;  // 测试模式：输出详细坐标数据
@@ -319,7 +400,7 @@ void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
     
-    targetSpeedL = 0.996* targetRPM; //给左轮 - 一点
+    targetSpeedL = 0.999* targetRPM; //给左轮 - 一点
     targetSpeedR = targetRPM;
 }
 
@@ -519,6 +600,33 @@ void setup() {
             OwnerSerial.println("AUTO_OFF");
             Serial.println("Sent AUTO_OFF to Owner");
             stopMotors(); // 顺便让车停下
+        }
+        // 手动规划开关/路线下发
+        else if (data == "MP_ON" || data == "MP_OFF" || data.startsWith("MP_ROUTE:")) {
+            OwnerSerial.println(data);
+            Serial.printf("Sent %s to Owner (manual planner)\n", data.c_str());
+        }
+        // 手动规划参数下发
+        else if (data.startsWith("MP_PARAM:")) {
+            OwnerSerial.println(data);
+            Serial.printf("Sent %s to Owner (manual param)\n", data.c_str());
+        }
+        // 本地序列控制（网页直接让小车按时间执行直行/转向）
+        else if (data.startsWith("SEQ:")) {
+            String payload = data.substring(4);
+            if (seqParse(payload)) {
+                Serial.printf("Loaded SEQ with %d steps\n", seqCount);
+            } else {
+                Serial.println("SEQ parse failed");
+            }
+        }
+        else if (data == "SEQ_START") {
+            seqStart();
+            Serial.println("SEQ start");
+        }
+        else if (data == "SEQ_STOP") {
+            seqStop();
+            Serial.println("SEQ stop");
         }
         
         // [新增] 转发参数调整命令给 Owner
@@ -807,6 +915,9 @@ void loop() {
             OwnerSerial.printf("VIVE:%.2f,%.2f,%.2f\n", viveX, viveY, viveAngle);
         }
     }
+    
+    // 本地序列执行（直行/转向按时间）
+    seqProcess();
     
     //TopHat update
     if (millis() - lastTopHatTime > 500) {
