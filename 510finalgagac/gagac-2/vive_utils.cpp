@@ -1,6 +1,14 @@
 /*
- * VIVE Utilities Library Implementation
- * Helper functions for VIVE coordinate processing and calculations
+ * vive_utils.cpp — Vive 工具函数实现
+ *
+ * 本文件实现：
+ * - `fastArctan()` / `fastAtan2()`：多项式近似的 atan/atan2（速度优先）
+ * - `medianFilter()`：三值中值滤波（当前主要用于保留工具能力）
+ * - `processViveData()`：Vive 坐标读取 + 校准 + 限幅 + 基础容错（无信号时重同步）
+ *
+ * 调用关系：
+ * - `gagac-2.ino` 会周期性对两个 tracker 调用 `processViveData()`，
+ *   再计算中心点与朝向角，并通过 UART 上报给 Owner。
  */
 
 #include "vive_utils.h"

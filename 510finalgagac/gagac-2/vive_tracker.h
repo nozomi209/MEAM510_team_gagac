@@ -1,6 +1,19 @@
 /*
- * VIVE Tracker 接口库（ESP32）
- * 负责解析 Lighthouse 脉冲（同步/扫描）并计算 X/Y 坐标
+ * vive_tracker.h — Vive Tracker 接口库（ESP32）
+ *
+ * 作用：
+ * - 对单个 Vive Tracker 信号脚进行中断采样
+ * - 解析 Lighthouse 基站的同步/扫描脉冲（J/K），计算出 X/Y 坐标
+ * - 提供状态机：无信号 / 仅同步 / 正常接收
+ *
+ * 典型调用：
+ * - `ViveTracker t(pin); t.initialize();`
+ * - 在主循环读取：`t.getXCoordinate()` / `t.getYCoordinate()` / `t.getStatus()`
+ * - 可用 `synchronize(pulseCount)` 做快速同步（无信号时恢复）
+ *
+ * 注意：
+ * - 中断回调通过 `attachInterruptArg` 绑定到实例（见 vive_tracker.cpp 的 wrapper）
+ * - 坐标单位与 Vive Lighthouse 脉冲解码一致（在上层再做校准/滤波）
  */
 
 #ifndef VIVE_TRACKER_H

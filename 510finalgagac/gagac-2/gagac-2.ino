@@ -1,5 +1,40 @@
 // gagac-2.ino 
 
+/*
+ * gagac-2.ino — Servant 板主控程序（底盘执行 + 网页控制 + Vive 采集）
+ *
+ * 本文件主要包含：
+ * 1) 底盘执行层（电机/编码器/PID）
+ *    - 接收来自网页或 Owner 的运动命令（"Fxx/Bxx/Lxx/Rxx/S"），并转换为电机目标转速/转向
+ *
+ * 2) Vive 采集与姿态计算
+ *    - 读取两只 Vive Tracker 的坐标，计算车体中心 (viveX,viveY) 与朝向角 viveAngle
+ *    - 周期性通过 UART 向 Owner 发送：`VIVE:x.xx,y.yy,a.aa`
+ *
+ * 3) 网页控制与命令路由（HTTP `/cmd`）
+ *    - 部分命令本地执行（直接控底盘/伺服/本地序列）
+ *    - 部分命令转发到 Owner（如 AUTO_ON/AUTO_OFF、PLAN*/MP_* 等）
+ *
+ * 4) 手动“按时间走路径”的 SEQ 序列控制 —— 纯本地，不依赖 Owner
+ *    - 目的：用一串“方向 + 强度 + 持续时间(ms)”让车按时间依次执行（适合调试/演示/无定位场景）
+ *    - 命令入口：网页 `/cmd` 支持
+ *        - `SEQ:<payload>` 载入序列（只解析、不启动）
+ *        - `SEQ_START` 开始执行
+ *        - `SEQ_STOP` 立刻停止并清空运行状态
+ *    - payload 格式：多个 step 用 `;` 分隔，每个 step 为：
+ *        - `<mode>,<value>,<duration_ms>`
+ *        - mode ∈ {F,B,L,R,S}
+ *          - F/B：直行，value=速度百分比(0~100)，duration_ms=持续毫秒
+ *          - L/R：原地转向，value=转向强度(0~100)，duration_ms=持续毫秒
+ *          - S：停车保持，value 可填 0
+ *    - 示例（前进2秒→停0.3秒→左转0.8秒→停0.2秒）：
+ *        `SEQ:F,60,2000;S,0,300;L,60,800;S,0,200`
+ *
+ * 相关实现函数：
+ * - `seqParse(payload)`：解析并装载步骤数组
+ * - `seqStart()` / `seqStop()` / `seqProcess()`：启动/停止/循环执行（基于 millis 计时）
+ */
+
 // 主控（Servant）程序：负责电机驱动、编码器测速、VIVE 追踪、Wi-Fi 网页控制，以及与 Owner 板的 UART 通信
 #include <WiFi.h>
 #include <WebServer.h>
@@ -503,7 +538,7 @@ void handleCommand(String cmd) {
 
 
 
-    ///到时候网页要加button
+    // 攻击伺服：网页“Start/Stop Attack”按钮下发 SV1 / SV0
     else if (cmd.startsWith("SV")) {
             int val = cmd.substring(2).toInt(); 
             
@@ -636,10 +671,18 @@ void setup() {
             Serial.println("Sent AUTO_OFF to Owner");
             stopMotors(); // 顺便让车停下
         }
-        // 手动规划开关/路线下发
+        // 手动规划开关/路线下发（传统Route方式）
         else if (data == "MP_ON" || data == "MP_OFF" || data.startsWith("MP_ROUTE:")) {
             OwnerSerial.println(data);
             Serial.printf("Sent %s to Owner (manual planner)\n", data.c_str());
+        }
+        // 新的路径规划命令（Plan to Target方式）
+        else if (data.startsWith("PLAN1:") || data == "PLAN_STOP" || 
+                 data.startsWith("PLAN_OBS:") || data == "PLAN_OBS_OFF" ||
+                 data.startsWith("PLAN_BOUND:") || 
+                 data.startsWith("PLAN_SET_START:") || data == "PLAN_CLEAR_START") {
+            OwnerSerial.println(data);
+            Serial.printf("Sent %s to Owner (path planner)\n", data.c_str());
         }
         // 手动规划参数下发
         else if (data.startsWith("MP_PARAM:")) {
@@ -699,6 +742,10 @@ void setup() {
             float val = data.substring(5).toFloat();
             setCarTurn(50, val);
             Serial.printf("↔ slider turn %.1f\n", val);
+        }
+        else if (data.startsWith("SV")) {
+            handleCommand(data); 
+            Serial.println("Web Attack Command Executed");
         }
 
         server.send(200, "text/plain", "OK");
@@ -972,6 +1019,7 @@ void loop() {
 
 
     // --- Attack Loop Logic (Non-blocking) ---
+    // 每 1 秒在 0/180 度间往返一次，SV0 会立即归位并停止
     if (isAttacking) {
         // 检查是否过去了 1000ms (1秒)
         if (millis() - lastAttackTime > 1000) {

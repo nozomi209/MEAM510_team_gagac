@@ -1,5 +1,7 @@
 # Vive 自动导航功能完整说明
 
+> 注意：本文件偏“Owner 侧导航/模式”的说明；**接线与启动以根目录 `README.md` 为准**。当前代码中 Vive tracker 接在 Servant 的 **GPIO6 / GPIO7**，UART 为 **TX=17, RX=18**（两板一致，交叉连接）。
+
 ## 📋 目录
 
 - [功能概述](#功能概述)
@@ -139,8 +141,8 @@ owner-4/
   - Owner板 GPIO18 (RX) ← Servant板 GPIO17 (TX)
   - Owner板 GPIO17 (TX) → Servant板 GPIO18 (RX)
 - **Vive追踪器**：
-  - Servant板 GPIO18 - 前追踪器
-  - Servant板 GPIO19 - 后追踪器
+  - Servant板 GPIO6 - 跟踪器1（车后左）
+  - Servant板 GPIO7 - 跟踪器2（车后右）
 - **ToF传感器**（Owner板）：
   - 前传感器（粉色）
   - 右前传感器（绿色）

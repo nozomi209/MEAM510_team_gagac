@@ -1,3 +1,20 @@
+/*
+ * behavior-vive.ino — 旧版 Vive 高/中频点对点导航（legacy）
+ *
+ * 本文件主要包含：
+ * - `gotoPoint(xDesired, yDesired, viveX, viveY, viveAngle, cmd)`：
+ *    基于当前 Vive 位姿计算到目标点的距离与航向误差，输出一条命令：
+ *    - 先转向对齐（"Lxx"/"Rxx"），再前进（"Fxx"），到达则 "S"
+ *
+ * - `decideViveNavigation(xDesired, yDesired, viveX, viveY, viveAngle, F, R1, R2)`：
+ *    在 `gotoPoint()` 的基础上叠加 ToF 简单避障（前方过近就停/转）。
+ *
+ * 说明：
+ * - 该文件属于早期“持续纠偏”的 Vive 导航实现，依赖实时角度误差闭环；
+ * - 当前项目的主导航推荐使用 `manual_planner.cpp` 的低频“停车定位—再规划—执行”模式，
+ *   本文件更多保留作对照/备份或单点简单演示用途。
+ */
+
 // behavior-vive.ino
 // Vive-based autonomous navigation logic
 // Uses Vive tracking data for position and orientation

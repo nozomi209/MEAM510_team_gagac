@@ -1,4 +1,18 @@
-/* VIVE Tracker 接口实现：通过中断解析同步/扫描脉冲，生成 X/Y 坐标 */
+/*
+ * vive_tracker.cpp — Vive Tracker 接口实现
+ *
+ * 本文件主要包含：
+ * - 中断 wrapper：`viveInterruptHandler(void* trackerInstance)`
+ *   用于把 ESP32 的 `attachInterruptArg` 回调路由到指定 `ViveTracker` 实例
+ *
+ * - `ViveTracker` 的实现：
+ *   - 通过 GPIO CHANGE 中断记录上升/下降沿时间
+ *   - 判别同步脉冲与扫描脉冲类型（J=Y, K=X）
+ *   - 在有效接收状态下解析脉宽并更新坐标
+ *
+ * 线程/中断安全：
+ * - 使用 `portMUX_TYPE viveMutex` 做 ISR 临界区保护，避免共享变量读写撕裂。
+ */
 
 #include "vive_tracker.h"
 

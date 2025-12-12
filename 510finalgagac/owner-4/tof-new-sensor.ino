@@ -1,3 +1,31 @@
+/*
+ * tof-new-sensor.ino — Owner 侧 ToF（VL53L4CX）三传感器驱动
+ *
+ * 本文件主要包含：
+ * 1) 三个 VL53L4CX ToF 传感器的初始化与地址分配
+ *    - 使用 3 个 XSHUT 引脚（XSHUT_PIN1/2/3）逐个唤醒传感器
+ *    - 通过 `InitSensor(SENSOR_ADDR[i])` 为每个传感器设置不同 I2C 地址，避免同址冲突
+ *    - 完成后对每个传感器调用 `VL53L4CX_StartMeasurement()` 开始连续测距
+ *
+ * 2) 统一的 ToF 接口（供 `owner-4.ino` / `behavior-wall.ino` 调用）
+ *    - `ToF_init()`：初始化 I2C、复位/唤醒传感器、设置地址并启动测距
+ *    - `ToF_read(uint16_t d[3])`：读三路距离（单位 mm），写入 d[0..2]
+ *
+ * 3) 三路距离的约定（d 数组含义）
+ *    - d[0] = F  ：前向 ToF（Front）
+ *    - d[1] = R1 ：右前/右侧 ToF（用于巡墙主控）
+ *    - d[2] = R2 ：右后/右侧 ToF（用于平行/转角辅助）
+ *   （具体物理安装方向以你们车上标号为准；Owner 侧会按 F/R1/R2 使用）
+ *
+ * 4) 数据有效性与“保持上一帧”的容错
+ *    - 本实现用 `last_distances[]` 保存上一帧有效读数：
+ *      当本帧 `RangeStatus!=0` 或无新数据时，不更新该路读数，从而减少瞬时跳变对控制的冲击
+ *
+ * ToF 功能在哪里被用到？
+ * - `owner-4.ino`：在 `setup()` 调用 `ToF_init()`；在 `loop()` 中周期 `ToF_read()`，
+ *   并把读数传入 `decideWallFollowing(F,R1,R2)` 等行为/避障逻辑。
+ */
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <vl53l4cx_class.h>

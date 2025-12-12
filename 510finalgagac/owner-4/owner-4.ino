@@ -1,5 +1,34 @@
+/*
+ * owner-4.ino — Owner 板主控（模式调度 + ToF 巡墙/避障 + 导航命令生成）
+ *
+ * 本文件主要包含：
+ * 1) 与 Servant 板的 UART 通信与命令分发
+ *    - 从 Servant 接收字符串命令（来源：网页/上位机转发、或 Servant 周期上报 VIVE）
+ *    - 解析并更新：
+ *      - VIVE 数据：`VIVE:x,y,a`（更新 viveX/viveY/viveAngle/hasViveFix）
+ *      - 模式控制：AUTO_ON/OFF、GOTO:、PLAN*、MP_* 等
+ *
+ * 2) ToF 三路距离读取与巡墙行为
+ *    - `ToF_init()` / `ToF_read(d[3])` 的实现位于 `tof-new-sensor.ino`
+ *    - 本文件在 `setup()` 初始化 ToF；在 `loop()` 周期读取并做标定 `applyToFCal()`
+ *    - 巡墙决策函数位于 `behavior-wall.ino`：`decideWallFollowing(F,R1,R2)` 返回 "F/L/R/S..."
+ *
+ * 3) 基于 VIVE 的点对点/路径规划模式（输出底盘命令给 Servant）
+ *    - 简单点对点：本文件内 `decideViveGoto()`（先对角再前进）
+ *    - 轴对齐路径规划 + 执行器：`manual_planner.cpp/.h`
+ *      - `mp_planTargets(...)` 规划 1~3 个目标点
+ *      - `mp_step(viveX,viveY,viveAngle)` 每次输出一条 "F/L/R/S" 指令
+ *
+ * 4) 输出给 Servant 的命令格式
+ *    - 统一使用 `sendToServant(cmd)` 下发（如 "F70", "L80", "R80", "S"）
+ *
+ * 说明：
+ * - 本文件是 Owner 的“调度中心”，真正的巡墙算法在 `behavior-wall.ino`，
+ *   ToF 传感器驱动在 `tof-new-sensor.ino`，规划/导航核心在 `manual_planner.cpp`。
+ */
+
 // Owner 板（模式控制 + ToF 巡墙）：接收 Web/Servant 指令，读取 ToF，生成运动命令
-// UART between owner and servant 
+// UART between owner and servant
 // Right Wall Following with Auto Switch
 
 #include <HardwareSerial.h>
@@ -8,16 +37,7 @@
 void ToF_init();
 bool ToF_read(uint16_t d[3]);
 
-// 手动规划（基于 VIVE 路点）
-struct Waypoint; // 在 manual_planner.ino 中定义
-void mp_setRoute(const Waypoint* wp, uint8_t cnt);
-void mp_setDefaultRoute();
-bool mp_loadRouteString(const String& s);
-String mp_step(float x, float y, float angleDeg);
-void mp_stop();
-bool mp_isActive();
-void mp_updateParam(const String& key, float val);
-extern uint8_t mp_routeCount;
+#include "manual_planner.h"
 
 //~~~~~~~~~~wifi config~~~~~~~~~~~~~~~~
 //const char* SSID     = "MoXianBao";
@@ -56,6 +76,9 @@ const float GOTO_TURN_RATE = 80.0f;  // 原地转向力度
 
 // 手动规划开关
 bool isManualPlan = false;
+bool isPathPlanMode = false; // 新模式：单点/多点轴对齐规划
+bool planStartFixed = false;
+float planStartX = 0.0f, planStartY = 0.0f;
 
 // ToF 校准（单位: mm），R2 实际测距偏小可在此调正
 int16_t TOF_OFFSET_F  = 0;
@@ -117,6 +140,10 @@ void setup() {
   
   ToF_init();
 
+  // 默认外部边界（mm）：X 3920~5100, Y 1390~5700
+  mp_setBoundary(3920.0f, 5100.0f, 5700.0f, 1390.0f);
+  mp_setBoundaryEnabled(true);
+
   // Owner RX=GPIO18, TX=GPIO17 （与 Servant 交叉连接；Servant TX=17 -> Owner RX=18）
   ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
   Serial.println("UART to servant ready. Waiting for Start...");
@@ -173,6 +200,132 @@ void loop() {
         mp_updateParam(key, val);
         Serial.printf(">>> MP_PARAM %s = %.2f\n", key.c_str(), val);
       }
+    }
+    // 设置外部边界: PLAN_BOUND:xmin,xmax,ymax,ymin
+    else if (webCmd.startsWith("PLAN_BOUND:")) {
+      String payload = webCmd.substring(11);
+      float vals[4]; uint8_t cnt = 0;
+      int start = 0;
+      while (start < payload.length() && cnt < 4) {
+        int c = payload.indexOf(',', start);
+        String item = (c == -1) ? payload.substring(start) : payload.substring(start, c);
+        item.trim();
+        if (item.length() > 0) vals[cnt++] = item.toFloat();
+        if (c == -1) break;
+        start = c + 1;
+      }
+      if (cnt == 4) {
+        mp_setBoundary(vals[0], vals[1], vals[2], vals[3]);
+        mp_setBoundaryEnabled(true);
+        Serial.printf(">>> PLAN_BOUND set xmin=%.1f xmax=%.1f ymax=%.1f ymin=%.1f\n",
+                      vals[0], vals[1], vals[2], vals[3]);
+      } else {
+        Serial.println(">>> PLAN_BOUND 格式: PLAN_BOUND:xmin,xmax,ymax,ymin");
+      }
+    }
+    // 新：设置障碍框（left,right,top,bottom[,margin]），用于轴对齐规划
+    else if (webCmd.startsWith("PLAN_OBS:")) {
+      String payload = webCmd.substring(9);
+      float vals[5]; uint8_t cnt = 0;
+      int start = 0;
+      while (start < payload.length() && cnt < 5) {
+        int c = payload.indexOf(',', start);
+        String item = (c == -1) ? payload.substring(start) : payload.substring(start, c);
+        item.trim();
+        if (item.length() > 0) vals[cnt++] = item.toFloat();
+        if (c == -1) break;
+        start = c + 1;
+      }
+      if (cnt >= 4) {
+        mp_setObstacleBox(vals[0], vals[1], vals[2], vals[3]);
+        mp_setObstacleEnabled(true);
+        if (cnt >= 5) mp_setPathMargin(vals[4]);
+        Serial.printf(">>> PLAN_OBS set L=%.1f R=%.1f T=%.1f B=%.1f margin=%.1f\n",
+                      vals[0], vals[1], vals[2], vals[3], MP_PATH_MARGIN);
+      } else {
+        Serial.println(">>> PLAN_OBS 格式: PLAN_OBS:left,right,top,bottom[,margin]");
+      }
+    }
+    else if (webCmd == "PLAN_OBS_OFF") {
+      mp_setObstacleEnabled(false);
+      Serial.println(">>> PLAN_OBS disabled");
+    }
+    // 锁定起点：PLAN_SET_START 或 PLAN_SET_START:x,y
+    else if (webCmd.startsWith("PLAN_SET_START")) {
+      int c = webCmd.indexOf(':');
+      if (c > 0) {
+        planStartX = webCmd.substring(c + 1, webCmd.indexOf(',', c + 1)).toFloat();
+        planStartY = webCmd.substring(webCmd.indexOf(',', c + 1) + 1).toFloat();
+        planStartFixed = true;
+        Serial.printf(">>> PLAN start locked: (%.1f, %.1f)\n", planStartX, planStartY);
+      } else if (hasViveFix) {
+        planStartX = viveX; planStartY = viveY; planStartFixed = true;
+        Serial.printf(">>> PLAN start locked from VIVE: (%.1f, %.1f)\n", planStartX, planStartY);
+      } else {
+        Serial.println(">>> PLAN_SET_START 失败：无 VIVE 坐标且未提供坐标");
+      }
+    }
+    else if (webCmd == "PLAN_CLEAR_START") {
+      planStartFixed = false;
+      Serial.println(">>> PLAN start cleared (will use live VIVE)");
+    }
+    // 新：单点规划命令，格式 PLAN1:x,y
+    else if (webCmd.startsWith("PLAN1:")) {
+      int c = webCmd.indexOf(',');
+      if (c > 6) {
+        float tx = webCmd.substring(6, c).toFloat();
+        float ty = webCmd.substring(c + 1).toFloat();
+        if (!hasViveFix) {
+          Serial.println(">>> PLAN1 失败：无 VIVE 坐标");
+        } else {
+          float list[1][2] = {{tx, ty}};
+          bool ok = mp_planTargets(viveX, viveY, list, 1, MP_PATH_MARGIN);
+          if (ok) {
+            isPathPlanMode = true;
+            isManualPlan = false;
+            isAutoRunning = false;
+            isViveGoto = false;
+            Serial.printf(">>> PLAN1 规划成功 -> 目标(%.1f, %.1f)\n", tx, ty);
+          } else {
+            Serial.println(">>> PLAN1 规划失败：路径被障碍挡住或路点超限");
+          }
+        }
+      } else {
+        Serial.println(">>> PLAN1 格式: PLAN1:x,y");
+      }
+    }
+    // 新：使用锁定起点规划执行，格式 PLAN_GO:x,y
+    else if (webCmd.startsWith("PLAN_GO:")) {
+      int c = webCmd.indexOf(',');
+      if (c > 7) {
+        float tx = webCmd.substring(7, c).toFloat();
+        float ty = webCmd.substring(c + 1).toFloat();
+        if (!planStartFixed && !hasViveFix) {
+          Serial.println(">>> PLAN_GO 失败：无锁定起点且无 VIVE 坐标");
+        } else {
+          float sx = planStartFixed ? planStartX : viveX;
+          float sy = planStartFixed ? planStartY : viveY;
+          float list[1][2] = {{tx, ty}};
+          bool ok = mp_planTargets(sx, sy, list, 1, MP_PATH_MARGIN);
+          if (ok) {
+            isPathPlanMode = true;
+            isManualPlan = false;
+            isAutoRunning = false;
+            isViveGoto = false;
+            Serial.printf(">>> PLAN_GO 成功: start(%.1f, %.1f) -> (%.1f, %.1f)\n", sx, sy, tx, ty);
+          } else {
+            Serial.println(">>> PLAN_GO 规划失败：路径被障碍挡住或路点超限");
+          }
+        }
+      } else {
+        Serial.println(">>> PLAN_GO 格式: PLAN_GO:x,y");
+      }
+    }
+    else if (webCmd == "PLAN_STOP") {
+      isPathPlanMode = false;
+      mp_stop();
+      sendToServant("S");
+      Serial.println(">>> PLAN 停止");
     }
     // 处理参数更新命令: PARAM:参数名=值
     else if (webCmd.startsWith("PARAM:")) {
@@ -240,13 +393,24 @@ void loop() {
     sendToServant(cmd);
   }
 
-  // 4. 手动规划（路点序列 + 撞击）
+  // 4. 新模式：轴对齐规划（基于 VIVE 坐标的单点/多点路径）
+  if (isPathPlanMode && mp_isActive() && hasViveFix) {
+    String cmd = mp_step(viveX, viveY, viveAngle);
+    sendToServant(cmd);
+    if (!mp_isActive()) { // 完成后自动停并退出模式
+      isPathPlanMode = false;
+      sendToServant("S");
+      Serial.println(">>> PLAN 完成");
+    }
+  }
+
+  // 5. 手动规划（路点序列 + 撞击）
   if (isManualPlan && mp_isActive() && hasViveFix) {
     String cmd = mp_step(viveX, viveY, viveAngle);
     sendToServant(cmd);
   }
 
-  // 3. 独立的 ToF 串口监视输出（不依赖 auto 模式）
+  // 6. 独立的 ToF 串口监视输出（不依赖 auto 模式）
   if (millis() - lastToFPrint >= 200) { // 每 200ms 一次
     lastToFPrint = millis();
     if (ToF_read(tofMon)) {
