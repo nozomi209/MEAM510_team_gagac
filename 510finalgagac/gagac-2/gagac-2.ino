@@ -7,20 +7,27 @@
 #include "gagac-web.h"
 #include "vive_tracker.h"
 #include "vive_utils.h"
-
 //TOPHAT
 #include <Wire.h>  // I2C
+//Fighting
+#include <ESP32Servo.h> 
 
 #define TOPHAT_ADDR 0x28
 #define PIN_I2C_SDA 15  // GPIO 15
 #define PIN_I2C_SCL 16  //GPIO 16
 
+#define SERVO_PIN 8
+Servo attackServo; // 创建对象
+
+// --- Attack Mode Variables ---
+bool isAttacking = false;         // 是否正在攻击
+unsigned long lastAttackTime = 0; // 上次动作的时间
+bool attackState = false;         // false=0度, true=180度
+
+
+
 unsigned long lastTopHatTime = 0;
 byte wifiPacketCount = 0; // 数WiFi packet 
-
-
-
-
 
 //UART from owner board
 HardwareSerial OwnerSerial(1);   // use UART1，RX/TX pin
@@ -493,6 +500,28 @@ void handleCommand(String cmd) {
     else if (cmd == "S") {
         stopMotors();
     }
+
+
+
+    ///到时候网页要加button
+    else if (cmd.startsWith("SV")) {
+            int val = cmd.substring(2).toInt(); 
+            
+            if (val == 1) {
+                // 收到 SV1 -> 开启攻击模式
+                isAttacking = true;
+                Serial.println(">>> Attack Mode STARTED (Loop 0-180)");
+            } 
+            else {
+                // 收到 SV0 (或其他) -> 停止攻击并归位
+                isAttacking = false;
+                attackServo.write(0); // 归位到0度
+                Serial.println(">>> Attack Mode STOPPED");
+            }
+        }
+
+
+
     // PID / Feedforward 参数
     else if (cmd.startsWith("KPB")) Kp_base = cmd.substring(3).toFloat();
     else if (cmd.startsWith("KIB")) Ki_base = cmd.substring(3).toFloat();
@@ -518,6 +547,12 @@ void handleRoot() { server.send(200, "text/html", webpage); }
 void setup() {
     Serial.begin(115200);
     delay(1000);
+
+    // 务必分配定时器并绑定引脚
+    attackServo.setPeriodHertz(50); 
+    attackServo.attach(SERVO_PIN, 500, 2500); 
+    attackServo.write(0); // 上电初始位置归零
+    Serial.println("Servo Initialized");
 
     //来自 owner 的 UART（实际接线：Servant TX=GPIO17 -> Owner RX，Servant RX=GPIO18 <- Owner TX）
     OwnerSerial.begin(115200, SERIAL_8N1, 18, 17);
@@ -933,6 +968,27 @@ void loop() {
         }
 
         wifiPacketCount = 0; // 重计
+    }
+
+
+    // --- Attack Loop Logic (Non-blocking) ---
+    if (isAttacking) {
+        // 检查是否过去了 1000ms (1秒)
+        if (millis() - lastAttackTime > 1000) {
+            lastAttackTime = millis(); // 更新时间
+            
+            if (attackState == false) {
+                // 当前是0，转到180
+                attackServo.write(180);
+                Serial.println("Attack: Smash! (180)");
+                attackState = true;
+            } else {
+                // 当前是180，收回0
+                attackServo.write(0);
+                Serial.println("Attack: Reset (0)");
+                attackState = false;
+            }
+        }
     }
 
     delay(5);

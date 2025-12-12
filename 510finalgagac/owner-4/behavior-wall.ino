@@ -1,6 +1,12 @@
 // behavior-wall.ino
 // 右侧巡墙逻辑：基于 3 路 ToF（前/右前/右后）实现避障与贴墙，参数可实时调整
 
+
+
+// if delta F from F now and F previous, is > 500
+//goind down slope -> b
+
+
 #include <Arduino.h>
 
 // 检查传感器读数是否有效
