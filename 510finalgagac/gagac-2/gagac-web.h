@@ -1,1434 +1,1655 @@
 /*
- * gagac-web.h - Embedded Web UI resources (Servant)
+ * gagac-web.h - Desktop Web UI resources (Servant)
  *
- * 作用：
- * - 以 PROGMEM 字符串形式内嵌一个控制页面（Servant AP 模式下访问，通常 `192.168.4.1`）
- * - 页面用于：
- *   - 手动底盘控制（F/B/L/R/S + 速度/转向滑条）
- *   - 模式控制/命令转发（如 AUTO_ON/OFF、PLAN*、MP_* 等通过 Servant 转发到 Owner）
- *   - Vive 数据显示与调试
- *   - SEQ 本地按时间动作序列的发送（`SEQ:` / `SEQ_START` / `SEQ_STOP`）
- *   - 参数面板（通过 `MP_PARAM:` 或 `PARAM:` 等命令下发）
+ * 目标：
+ * - 面向电脑端操作（更简洁清晰）
+ * - 保留键盘映射：↑↓←→ 控制；Q/W 调速度；A/S 调转向；松开方向键自动 S
+ * - 支持实时调参：PARAM:... 与 MP_PARAM:...
  *
  * 说明：
- * - 网页本身不直接驱动电机，最终都会变成对 Servant 的 `/cmd?data=...` 请求；
- * - Servant 在 `gagac-2.ino` 的 `/cmd` handler 中解析这些命令并执行/转发。
+ * - 网页只负责对 Servant 发 `/cmd?data=...`，Servant 在 `gagac-2.ino` 里执行/转发
  */
 
 #pragma once
-#include <Arduino.h> // for PROGMEM
+#include <Arduino.h>
 
-// 嵌入式网页（AP 模式下访问 192.168.4.1）：控制底盘运动、模式切换、VIVE 数据展示与参数调节
 const char webpage[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mobile Base Control</title>
-<style>
-  body {
-    background: #f4f7f6;
-    font-family: "Poppins", sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    min-height: 100vh;
-    margin: 0;
-    padding: 20px 0;
-  }
-  .control-card {
-    background: #fff;
-    border-radius: 24px;
-    box-shadow: 0 12px 30px rgba(0,0,0,0.08);
-    padding: 24px;
-    width: 320px;
-    text-align: center;
-    margin-top: 10px;
-  }
-  h2 {
-    color: #444;
-    font-size: 1.4em;
-    margin-bottom: 25px;
-    font-weight: 600;
-  }
-  .slider-group {
-    margin-bottom: 25px;
-    text-align: left;
-  }
-  label {
-    font-size: 0.9em;
-    color: #666;
-    font-weight: 500;
-    margin-left: 2px;
-  }
-  
-  /* Custom Slider Styling */
-  input[type=range] {
-    -webkit-appearance: none;
-    width: 100%;
-    margin-top: 12px;
-    height: 8px;
-    border-radius: 5px;
-    background: #ececec; /* Light grey background */
-    outline: none;
-    cursor: pointer;
-  }
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: #92C08E; /* Pastel Green */
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    cursor: pointer;
-    transition: transform 0.1s;
-  }
-  input[type=range]::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-  }
-  
-  .control-pad {
-    display: grid;
-    grid-template-columns: 80px 80px 80px;
-    grid-template-rows: 80px 80px 80px;
-    justify-content: center;
-    align-items: center;
-    margin-top: 15px;
-    margin-bottom: 25px;
-  }
-  .btn {
-    background: #92C08E; /* Pastel Green */
-    border: none;
-    color: white;
-    font-size: 1.2em;
-    border-radius: 14px;
-    height: 60px;
-    width: 60px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 10px rgba(146, 192, 142, 0.4);
-  }
-  .btn:active {
-    transform: scale(0.95);
-    box-shadow: 0 2px 5px rgba(146, 192, 142, 0.3);
-  }
-  .btn:hover {
-    background: #81b37d;
-  }
-  
-  .mode-btn-group {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 25px;
-  }
-  .mode-btn {
-    flex: 1;
-    border: none;
-    color: white;
-    font-size: 0.95em;
-    font-weight: 600;
-    border-radius: 14px;
-    height: 50px;
-    cursor: pointer;
-    transition: all 0.3s;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
-  }
-  .mode-btn:active {
-    transform: translateY(2px);
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-  }
-
-  footer {
-    color: #ccc;
-    font-size: 0.75em;
-    margin-top: 25px;
-  }
-  @media (max-height: 700px) {
-    body { padding: 10px 0; }
-    .control-card { padding: 20px; width: 95vw; max-width: 360px; }
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GAGAC 桌面控制台</title>
+  <style>
+    /* 按你“之前网页”的配色风格：浅色背景 + pastel 按钮 */
+    :root{
+      --bg:#f4f7f6;
+      --text:#444;
+      --muted:#666;
+      --line:#eee;
+      --card:#ffffff;
+      --shadow: 0 10px 25px rgba(0, 0, 0, 0.10);
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: "Poppins", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, PingFang SC, "Microsoft YaHei", Arial;
+      background: var(--bg);
+      color: var(--text);
+    }
+    /* 横屏/电脑优先：全宽铺开 */
+    .wrap{ max-width:none; margin:0 auto; padding:14px 16px 18px; }
+    .topbar{ display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    .title{ display:flex; flex-direction:column; gap:2px; }
+    .title h1{ font-size:18px; margin:0; letter-spacing:0.3px; }
+    .title .sub{ font-size:12px; color:var(--muted); }
+    .pill{
+      padding:6px 10px;
+      border:1px solid #ddd;
+      border-radius:999px;
+      font-size:12px;
+      color:#555;
+      background:#fff;
+      white-space:nowrap;
+      max-width: 48vw;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    /* 三列横屏：左=手动控制，中=状态/快捷，右=参数（可滚动） */
+    .grid{ display:grid; grid-template-columns: 380px minmax(340px, 1fr) 520px; gap:12px; align-items:start; }
+    @media (max-width: 1100px){ .grid{ grid-template-columns: 380px 1fr; } }
+    @media (max-width: 820px){ .grid{ grid-template-columns:1fr; } }
+    .card{
+      background: var(--card);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+    .card h2{ margin:0 0 10px 0; font-size: 1.05em; color:#444; font-weight: 800; }
+    .scrollY{ max-height: calc(100vh - 110px); overflow:auto; }
+    .scrollY::-webkit-scrollbar{ width:10px; }
+    .scrollY::-webkit-scrollbar-thumb{ background: rgba(0,0,0,0.12); border-radius:999px; }
+    .scrollY::-webkit-scrollbar-track{ background: rgba(0,0,0,0.04); border-radius:999px; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; }
+    .btn{
+      border:none;
+      border-radius:12px;
+      padding:12px 12px;
+      font-size:1em;
+      font-weight:800;
+      cursor:pointer;
+      transition: all 0.2s ease;
+      color:#222;
+      background:#ddd;
+    }
+    .btn:active{ transform: translateY(1px); }
+    .btn.ghost{
+      background:#d3d3d3;
+      color:#555;
+    }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      padding:2px 6px;
+      border:1px solid #ddd;
+      border-bottom-width:2px;
+      border-radius:8px;
+      background:#fff;
+      color:#333;
+      font-size:12px;
+    }
+    .hint{ color:#666; font-size:12px; line-height:1.5; }
+    .bigpad{ display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:10px; }
+    .big{
+      padding:18px 10px;
+      border-radius:15px;
+      border:none;
+      color:white;
+      font-size:1.05em;
+      font-weight:900;
+      cursor:pointer;
+      transition: 0.2s;
+    }
+    /* 保留你原网页的底盘按钮配色 */
+    #btnF{ background:#92C08E; }
+    #btnB{ background:#f4a261; }
+    #btnL{ background:#6baed6; }
+    #btnR{ background:#6baed6; }
+    #btnS{ background:#f08080; }
+    .big:active{ transform: translateY(1px); }
+    .slider{ margin-top:10px; padding-top:10px; border-top:1px solid #f0f0f0; }
+    label{ display:flex; justify-content:space-between; align-items:center; font-size:0.9em; color:#555; font-weight:700; }
+    input[type="range"]{
+      width:100%;
+      margin-top:8px;
+      height:10px;
+      border-radius:5px;
+      outline:none;
+      background: linear-gradient(to right, #92C08E 0%, #92C08E 50%, #ececec 50%, #ececec 100%);
+      cursor:pointer;
+    }
+    .section{ margin-top:10px; border-top:1px solid #f0f0f0; padding-top:10px; }
+    details{
+      border:1px solid #eee;
+      border-radius:12px;
+      background:#fafafa;
+      padding:10px 10px 0;
+      margin-top:10px;
+    }
+    summary{
+      cursor:pointer;
+      list-style:none;
+      font-weight:900;
+      color:#444;
+      font-size:0.95em;
+      margin-bottom:10px;
+    }
+    summary::-webkit-details-marker{ display:none; }
+    .paramGrid{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; padding-bottom:10px; }
+    @media (max-width: 720px){ .paramGrid{ grid-template-columns:1fr; } }
+    .param{
+      border:1px solid #eee;
+      border-radius:12px;
+      padding:10px;
+      background:#fff;
+    }
+    .param .k{ font-weight:900; font-size:12px; color:#333; }
+    .param .meta{ font-size:11px; color:#777; margin-top:4px; min-height: 14px; }
+    .param .ctrl{ margin-top:8px; }
+    .footer{ margin-top:14px; color:#aaa; font-size:12px; text-align:center; }
+    .kv{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .kv .box{ border:1px solid #eee; border-radius:12px; padding:10px; background:#fff; }
+    .kv .box .k{ font-size:11px; color:#777; }
+    .kv .box .v{ margin-top:6px; font-size:14px; font-weight:900; color:#333; }
+    input[type="text"]{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,0.03);
+      color:var(--text);
+      outline:none;
+    }
+    input[type="text"]::placeholder{ color: rgba(147,164,191,0.75); }
+    textarea{
+      width:100%;
+      min-height:78px;
+      resize:vertical;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid #ddd;
+      background:#fff;
+      color:#333;
+      outline:none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size:12px;
+      line-height:1.4;
+    }
+    canvas{
+      width:100%;
+      border-radius:12px;
+      border:1px solid #ddd;
+      background:#fff;
+      display:block;
+    }
+  </style>
 </head>
-
 <body>
-  <div class="control-card">
-    <h2>Mobile Base Control</h2>
-
-    <div class="slider-group">
-      <label for="speedSlider">Speed: <span id="speedVal">50%</span></label>
-      <input type="range" id="speedSlider" min="0" max="100" value="50">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">
+        <h1>GAGAC 桌面控制台</h1>
+        <div class="sub">电脑键盘控制 + 参数实时调节（通过 <span class="kbd">/cmd?data=...</span>）</div>
+      </div>
+      <div class="pill" id="statusPill">就绪</div>
     </div>
 
-    <div class="slider-group">
-      <label for="turnSlider">Turn Factor: <span id="turnVal">30%</span></label>
-      <input type="range" id="turnSlider" min="0" max="100" value="30">
-    </div>
+    <div class="grid">
+      <!-- 左：手动控制 -->
+      <div class="card">
+        <h2>手动控制（保留键盘映射）</h2>
+        <div class="hint">
+          - 方向控制：<span class="kbd">↑</span>/<span class="kbd">↓</span>/<span class="kbd">←</span>/<span class="kbd">→</span><br />
+          - 调速度：<span class="kbd">Q</span> -5，<span class="kbd">W</span> +5（百分比）<br />
+          - 调转向：<span class="kbd">A</span> -5，<span class="kbd">S</span> +5（百分比）<br />
+          - 松开方向键自动发送 <span class="kbd">S</span>；也可按 <span class="kbd">Space</span> 急停
+        </div>
 
-    <div class="control-pad">
-      <div></div>
-      <button class="btn" id="btnF">F</button>
-      <div></div>
-
-      <button class="btn" id="btnL">L</button>
-      <button class="btn" id="btnS">S</button>
-      <button class="btn" id="btnR">R</button>
-
-      <div></div>
-      <button class="btn" id="btnB">B</button>
-      <div></div>
-    </div>
-
-    <div class="mode-btn-group">
-      <button class="mode-btn" id="btnAuto" style="background:#F7E290;">
-        Start Auto
-      </button>
-      
-      <button class="mode-btn" id="btnVive" style="background:#E79DC3;">
-        Enable VIVE
-      </button>
-    </div>
-
-    <div class="mode-btn-group" style="margin-top:10px;">
-      <button class="mode-btn" id="btnAttackStart" style="background:#f7b5b5;">
-        Start Attack
-      </button>
-      <button class="mode-btn" id="btnAttackStop" style="background:#b5d8f7;">
-        Stop Attack
-      </button>
-    </div>
-
-    <!-- 手动规划控制 - 传统Route方式 -->
-    <div class="mode-btn-group" style="margin-top:10px;">
-      <button class="mode-btn" id="btnMp" style="background:#9fc5e8;">
-        Start Manual Plan
-      </button>
-      <button class="mode-btn" id="btnSendRoute" style="background:#a4d7a7;">
-        Send Route
-      </button>
-    </div>
-    <div class="slider-group" style="margin-top:10px;">
-      <label for="routeInput">Route (x,y,heading,bumps;...)</label>
-      <textarea id="routeInput" style="width:100%; height:70px; margin-top:8px; border-radius:10px; border:1px solid #ddd; padding:8px; font-size:0.9em;">5120,4080,90,0;4661,4164,180,0;4661,4164,-90,1;4500,5800,90,4</textarea>
-      <small style="color:#777;">示例: x,y,heading,bumps 多组用分号分隔</small>
-    </div>
-
-    <!-- 轴对齐规划：设置目标点并自动避障 -->
-    <div style="margin-top:15px; padding:12px; background:#f0f8ff; border-radius:12px; border:2px solid #92C08E;">
-      <h3 style="margin:0 0 12px 0; font-size:1em; color:#444; text-align:center;">🎯 智能路径规划与执行</h3>
-      
-      <!-- 配置状态检查清单 -->
-      <div style="margin-bottom:12px; padding:10px; background:#fff; border-radius:8px; border:1px solid #ddd;">
-        <h4 style="margin:0 0 8px 0; font-size:0.9em; color:#666;">📋 配置清单</h4>
-        <div style="display:flex; flex-direction:column; gap:5px; font-size:0.85em;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span id="checkVive" style="font-size:1.2em;">⚪</span>
-            <span>VIVE 定位系统</span>
+        <div class="section">
+          <div class="row">
+            <!-- 保留原按钮配色（由 JS 设置 background） -->
+            <button class="btn" id="btnAuto">Start Auto</button>
+            <button class="btn" id="btnVive">Enable VIVE</button>
+            <button class="btn" id="btnMp">Start Manual Plan</button>
           </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span id="checkBound" style="font-size:1.2em;">✅</span>
-            <span>场地边界</span>
+          <div class="hint" style="margin-top:8px;">手动操作会自动停止 Auto（避免抢控制）。</div>
+        </div>
+
+        <div class="slider">
+          <label for="speedSlider">速度（发送 F/B 的百分比）<span><span id="speedVal">50</span>%</span></label>
+          <input type="range" id="speedSlider" min="0" max="100" value="50" />
+        </div>
+        <div class="slider">
+          <label for="turnSlider">转向力度（发送 L/R 的百分比）<span><span id="turnVal">30</span>%</span></label>
+          <input type="range" id="turnSlider" min="0" max="100" value="30" />
+        </div>
+
+        <div class="bigpad">
+          <div></div>
+          <button class="big ok" id="btnF">前进 F</button>
+          <div></div>
+          <button class="big" id="btnL">差速左 L</button>
+          <button class="big bad" id="btnS">停止 S</button>
+          <button class="big" id="btnR">差速右 R</button>
+          <div></div>
+          <button class="big" id="btnB">后退 B</button>
+          <div></div>
+        </div>
+        <div class="hint" style="margin:8px 0 4px;">原地转向（一轮前进一轮后退）</div>
+        <div class="row" style="gap:10px;">
+          <button class="big" id="btnPL" style="background:#ffd54f;">原地左转 PL</button>
+          <button class="big" id="btnPR" style="background:#ffd54f;">原地右转 PR</button>
+        </div>
+
+        <div class="section hint">最近命令：<span class="kbd" id="lastCmd">-</span></div>
+
+        <!-- 曼哈顿路径规划 Canvas -->
+        <div class="section">
+          <h2 style="margin-top:8px;">安全区域路径规划</h2>
+          <div style="position:relative;background:#1a1a2e;border-radius:12px;padding:8px;">
+            <canvas id="planCanvas" width="360" height="400" style="cursor:crosshair;display:block;"></canvas>
+            <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.7);padding:6px 10px;border-radius:8px;font-size:10px;color:#fff;">
+              <div><span style="color:#4ade80;">■</span> 安全区域（可通行）</div>
+              <div><span style="color:#ef4444;">■</span> 障碍区域（禁止）</div>
+              <div><span style="color:#ff6b35;">●</span> 当前位置</div>
+              <div><span style="color:#60a5fa;">●</span> 目标点</div>
+              <div><span style="color:#fbbf24;">━</span> 规划路径</div>
+            </div>
+            <div id="coordDisplay" style="position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,0.7);padding:4px 8px;border-radius:6px;font-size:11px;color:#fff;font-family:monospace;">
+              X: - Y: -
+            </div>
           </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span id="checkObs" style="font-size:1.2em;">⚪</span>
-            <span>障碍物配置</span>
+          <div style="margin-top:10px;padding:10px;background:#f8f9fa;border-radius:10px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+              <div><b>当前位置：</b><span class="kbd" id="curPosDisplay">等待VIVE...</span></div>
+              <div><b>目标点：</b><span class="kbd" id="planTargetDisplay">未设置</span></div>
+              <div><b>距离：</b><span class="kbd" id="distDisplay">-</span></div>
+              <div><b>状态：</b><span class="kbd" id="planStatusDisplay">就绪</span></div>
+            </div>
           </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span id="checkTarget" style="font-size:1.2em;">⚪</span>
-            <span>目标点设置</span>
+          <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap;">
+            <button class="btn" id="btnPlanExec" style="background:#22c55e;color:#fff;flex:1;">▶ 中频导航</button>
+            <button class="btn" id="btnPlanExecLF" style="background:#3b82f6;color:#fff;flex:1;">▶ 低频导航</button>
+            <button class="btn" id="btnPlanClear" style="background:#6b7280;color:#fff;">清除</button>
+            <button class="btn" id="btnPlanStopNav" style="background:#ef4444;color:#fff;">■ 停止</button>
           </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span id="checkPath" style="font-size:1.2em;">⚪</span>
-            <span>路径规划完成</span>
+          <div class="slider" style="margin-top:8px;">
+            <label for="mfExecSlider">中频周期<span><span id="mfExecVal">400</span>ms</span></label>
+            <input type="range" id="mfExecSlider" min="200" max="800" step="50" value="400" />
+          </div>
+
+          <!-- 导航日志 -->
+          <div style="margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-weight:800;font-size:12px;">导航日志</span>
+              <button class="btn" id="btnClearNavLog" style="background:#6b7280;color:#fff;padding:4px 10px;font-size:11px;">清空</button>
+            </div>
+            <div id="navLogArea" style="background:#1e1e1e;border-radius:10px;padding:8px;height:160px;overflow-y:auto;font-family:monospace;font-size:11px;color:#0f0;line-height:1.5;">
+              <div style="color:#666;">[等待导航开始...]</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- 目标点设置 -->
-      <div class="slider-group" style="margin-bottom:10px;">
-        <label for="planTarget">🎯 目标点 (x,y)</label>
-        <input id="planTarget" type="text" placeholder="例如: 4500,3200" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.9em; margin-top:8px;">
-        <small style="color:#777;">输入目标坐标，系统将自动规划避障路径</small>
+      <!-- 中：状态 & 快捷命令 -->
+      <div class="card">
+        <h2>状态 / 快捷命令</h2>
+        <div class="kv">
+          <div class="box">
+            <div class="k">Auto</div>
+            <div class="v" id="uiAutoState">OFF</div>
+          </div>
+          <div class="box">
+            <div class="k">VIVE</div>
+            <div class="v" id="uiViveState">OFF</div>
+          </div>
+          <div class="box">
+            <div class="k">Manual Plan</div>
+            <div class="v" id="uiMpState">OFF</div>
+          </div>
+          <div class="box">
+            <div class="k">最近命令</div>
+            <div class="v" style="font-size:12px; font-weight:700;"><span class="kbd" id="uiLastCmd">-</span></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="hint" style="margin-bottom:8px;">可直接输入一条命令（会走 <span class="kbd">/cmd?data=</span>）。例如：<span class="kbd">AUTO_ON</span> / <span class="kbd">PARAM:WALL_TARGET_DIST=200</span></div>
+          <input id="cmdInput" type="text" placeholder='例如: PARAM:WF_TURN_DEADBAND=12' />
+          <div class="row" style="margin-top:10px;">
+                <button class="btn" id="btnSendCmd" style="background:#a4d7a7;">发送命令</button>
+                <button class="btn" id="btnStopNow" style="background:#f08080;">急停 S</button>
+          </div>
+        </div>
+
+        <div class="section hint">
+          提示：你现在的底盘接口是"直走 Fxx / 原地转 Lxx/Rxx"，所以想更直可以把 <span class="kbd">WF_TURN_DEADBAND</span> 调大一点（例如 12~18）。
+        </div>
+
+        <!-- 调试模式面板 -->
+        <details>
+          <summary>🔧 调试模式（Debug Mode）</summary>
+          <div class="row" style="margin-bottom:10px;">
+            <button class="btn" id="btnDebugOn" style="background:#a5d6a7;">开启调试</button>
+            <button class="btn" id="btnDebugOff" style="background:#ef9a9a;">关闭调试</button>
+            <button class="btn ghost" id="btnDebugClear">清空日志</button>
+          </div>
+          <div class="kv" style="margin-bottom:10px;">
+            <div class="box"><div class="k">状态</div><div class="v" id="debugStatus">OFF</div></div>
+          </div>
+          <div class="hint" style="margin-bottom:6px;">调试日志（自动刷新）：</div>
+          <textarea id="debugLogArea" readonly style="width:100%;height:200px;font-size:11px;background:#1e1e1e;color:#0f0;font-family:monospace;"></textarea>
+        </details>
+
+        <!-- 之前网页的功能：都保留在这里 -->
+        <details open>
+          <summary>高级功能（旧版功能保留）</summary>
+
+          <details open>
+            <summary>VIVE 数据（/viveData）</summary>
+            <div class="kv">
+              <div class="box"><div class="k">X</div><div class="v" id="viveXVal">0</div></div>
+              <div class="box"><div class="k">Y</div><div class="v" id="viveYVal">0</div></div>
+              <div class="box"><div class="k">Angle</div><div class="v" id="viveAngleVal">0</div></div>
+              <div class="box"><div class="k">Status</div><div class="v" id="viveStatusVal">-</div></div>
+            </div>
+            <div class="section">
+              <div class="row">
+                <button class="btn ghost" id="btnViveRefresh">刷新</button>
+              </div>
+              <div class="hint" style="margin-top:8px;">
+                FrontRaw: (<span class="kbd" id="frontRawX">0</span>, <span class="kbd" id="frontRawY">0</span>) |
+                BackRaw: (<span class="kbd" id="backRawX">0</span>, <span class="kbd" id="backRawY">0</span>)<br/>
+                FrontFilt: (<span class="kbd" id="frontFiltX">0</span>, <span class="kbd" id="frontFiltY">0</span>) |
+                BackFilt: (<span class="kbd" id="backFiltX">0</span>, <span class="kbd" id="backFiltY">0</span>)
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>ToF 实时数据（从 Owner 转发）</summary>
+            <div class="kv">
+              <div class="box"><div class="k">Front F (mm)</div><div class="v" id="tofFVal">-</div></div>
+              <div class="box"><div class="k">RightFront R1 (mm)</div><div class="v" id="tofR1Val">-</div></div>
+              <div class="box"><div class="k">RightBack R2 (mm)</div><div class="v" id="tofR2Val">-</div></div>
+              <div class="box"><div class="k">Age</div><div class="v" id="tofAgeVal">-</div></div>
+            </div>
+            <div class="hint" style="margin-top:8px;">
+              若 Age 很大：说明 Owner 没在发 TOF:...（检查 Owner 是否已烧录、UART 线是否正常）。
+            </div>
+          </details>
+
+          <details open>
+            <summary>巡墙策略/状态（从 Owner 转发）</summary>
+            <div class="kv">
+              <div class="box"><div class="k">策略</div><div class="v">P控制 + 状态机</div></div>
+              <div class="box"><div class="k">Auto(Owner)</div><div class="v" id="wfAutoVal">-</div></div>
+              <div class="box"><div class="k">状态</div><div class="v" id="wfStateVal">-</div></div>
+              <div class="box"><div class="k">Last Cmd</div><div class="v" id="wfCmdVal">-</div></div>
+              <div class="box"><div class="k">Turn</div><div class="v" id="wfTurnVal">-</div></div>
+              <div class="box"><div class="k">Angle(deg)</div><div class="v" id="wfAngleVal">-</div></div>
+              <div class="box"><div class="k">DistErr</div><div class="v" id="wfErrVal">-</div></div>
+              <div class="box"><div class="k">Age</div><div class="v" id="wfAgeVal">-</div></div>
+            </div>
+          </details>
+
+          <details>
+            <summary>手动规划 / 路线 / 规划命令（PLAN* / MP_ROUTE / MP_ON）</summary>
+            <div class="section">
+              <div class="hint" style="margin-bottom:6px;">MP_ROUTE（格式：x,y,h,b;...）</div>
+              <input id="routeInput" type="text" placeholder="例如: 4500,3200,90,1; 4700,3400,0,0" />
+              <div class="row" style="margin-top:10px;">
+              <button class="btn" id="btnSendRoute" style="background:#a4d7a7;">发送 MP_ROUTE</button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="hint" style="margin-bottom:6px;">PLAN1 目标点（x,y）</div>
+              <input id="planTarget" type="text" placeholder="例如: 4500,3200" />
+              <div class="row" style="margin-top:10px;">
+                <button class="btn" id="btnPlan1" style="background:#92C08E;">开始规划并执行（PLAN1）</button>
+                <button class="btn" id="btnPlanStop" style="background:#f08080;">停止（PLAN_STOP）</button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="hint" style="margin-bottom:6px;">障碍物（left,right,top,bottom,margin）</div>
+              <input id="planObs" type="text" placeholder="例如: 4100,4945,4240,3130,150" />
+              <div class="row" style="margin-top:10px;">
+                <button class="btn" id="btnPlanObsDefault" style="background:#ffe8a1;">加载默认</button>
+                <button class="btn" id="btnPlanObs" style="background:#ffd28e;">应用（PLAN_OBS）</button>
+                <button class="btn" id="btnPlanObsOff" style="background:#d3d3d3;color:#555;">禁用（PLAN_OBS_OFF）</button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="hint" style="margin-bottom:6px;">边界（xmin,xmax,ymax,ymin）</div>
+              <input id="planBound" type="text" value="3920,5100,5700,1390" />
+              <div class="row" style="margin-top:10px;">
+                <button class="btn" id="btnPlanBound" style="background:#cde4ff;color:#444;">应用边界（PLAN_BOUND）</button>
+                <button class="btn" id="btnPlanSetStart" style="background:#8fd3f4;color:#234;">锁定起点（PLAN_SET_START）</button>
+                <button class="btn" id="btnPlanClearStart" style="background:#d3d3d3;color:#555;">清除起点（PLAN_CLEAR_START）</button>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="hint" style="margin-bottom:6px;">路径预览（简化示意，仅用于调参/核对坐标）</div>
+              <canvas id="pathCanvas" width="520" height="320"></canvas>
+              <div class="hint" style="margin-top:8px;"><span class="kbd" id="pathStatus">等待...</span></div>
+            </div>
+          </details>
+
+          <details>
+            <summary>SEQ 时间序列（SEQ / SEQ_START / SEQ_STOP）</summary>
+            <div class="hint" style="margin-bottom:6px;">格式：MODE,VAL,DurationMs;... 例如：F,50,2000;S,0,200;L,80,600</div>
+            <textarea id="seqInput">F,50,5600;S,0,100;L,100,1500</textarea>
+            <!-- Sequence：要求保留之前的文案与配色 -->
+            <div class="row" style="margin-top:10px;">
+              <button class="btn" id="btnSendSeq" style="background:#a4d7a7;">Send Sequence</button>
+              <button class="btn" id="btnSeqStart" style="background:#ffa94d;">Start Sequence</button>
+              <button class="btn" id="btnSeqStop" style="background:#f08080;">Stop Sequence</button>
+            </div>
+          </details>
+
+          <details>
+            <summary>攻击伺服（SV1 / SV0）</summary>
+            <div class="row">
+              <button class="btn" id="btnAttackStart" style="background:#f7b5b5;">Start Attack（SV1）</button>
+              <button class="btn" id="btnAttackStop" style="background:#90caf9;">Stop Attack（SV0）</button>
+            </div>
+          </details>
+        </details>
       </div>
 
-      <!-- 起点控制 -->
-      <div style="margin-bottom:10px;">
-        <label style="font-size:0.9em; color:#666; font-weight:500;">📍 起点设置</label>
-        <div class="mode-btn-group" style="margin-top:6px;">
-          <button class="mode-btn" id="btnPlanSetStart" style="background:#8fd3f4; color:#234; font-size:0.85em;">锁定当前位置</button>
-          <button class="mode-btn" id="btnPlanClearStart" style="background:#d3d3d3; color:#555; font-size:0.85em;">使用实时位置</button>
+      <!-- 右：参数面板（固定高度可滚动） -->
+      <div class="card scrollY">
+        <h2>参数面板（实时发送 PARAM / MP_PARAM）</h2>
+        <div class="row">
+          <button class="btn ghost" id="btnSendAll">发送全部参数</button>
+          <button class="btn bad" id="btnResetDefaults">恢复默认值</button>
         </div>
-        <input id="planStartShow" type="text" readonly placeholder="使用 VIVE 实时坐标" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px; background:#f9f9f9; text-align:center;">
-      </div>
-
-      <!-- 障碍物设置 -->
-      <div style="margin-bottom:10px;">
-        <label style="font-size:0.9em; color:#666; font-weight:500;">🚧 障碍物配置</label>
-        <div class="mode-btn-group" style="margin-top:6px;">
-          <button class="mode-btn" id="btnPlanObsDefault" style="background:#ffe8a1; color:#444; font-size:0.85em;">加载默认</button>
-          <button class="mode-btn" id="btnPlanObs" style="background:#ffd28e; font-size:0.85em;">自定义</button>
-          <button class="mode-btn" id="btnPlanObsOff" style="background:#d3d3d3; color:#555; font-size:0.85em;">禁用</button>
-        </div>
-        <input id="planObs" type="text" placeholder="left,right,top,bottom,margin" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
-        <small style="color:#777;">格式: 左,右,上,下,安全边距(可选)</small>
-      </div>
-
-      <!-- 边界设置 -->
-      <div style="margin-bottom:10px;">
-        <label style="font-size:0.9em; color:#666; font-weight:500;">📏 场地边界</label>
-        <div class="mode-btn-group" style="margin-top:6px;">
-          <button class="mode-btn" id="btnPlanBound" style="background:#cde4ff; color:#444; font-size:0.85em;">应用边界</button>
-        </div>
-        <input id="planBound" type="text" value="3920,5100,5700,1390" style="width:100%; padding:8px; border-radius:10px; border:1px solid #ddd; font-size:0.85em; margin-top:6px;">
-        <small style="color:#777;">格式: xmin,xmax,ymax,ymin (默认场地尺寸)</small>
-      </div>
-
-      <!-- 执行控制按钮 -->
-      <div class="mode-btn-group" style="margin-top:12px;">
-        <button class="mode-btn" id="btnPlan1" style="background:#92C08E; font-size:1em; font-weight:bold;">
-          ▶️ 开始规划并执行
-        </button>
-        <button class="mode-btn" id="btnPlanStop" style="background:#f4c2c2; font-size:1em; font-weight:bold;">
-          ⏹️ 停止
-        </button>
-      </div>
-    </div>
-
-    <!-- 路径可视化大图 -->
-    <div style="margin-top:15px; padding:12px; background:#f8f9fa; border-radius:12px; border:2px solid #92C08E;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h3 style="margin:0; font-size:1em; color:#444;">🗺️ 路径预览与实时监控</h3>
-        <small id="pathStatus" style="color:#888; font-weight:600;">等待规划...</small>
-      </div>
-      <canvas id="pathCanvas" width="480" height="400" style="width:100%; max-width:500px; border:2px solid #92C08E; border-radius:8px; background:#fff; display:block; margin:0 auto;"></canvas>
-      <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.8em; color:#666;">
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:16px; height:3px; background:#68b684;"></span>
-          <span>场地边界</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:16px; height:12px; background:rgba(255,99,71,0.3); border:1px solid rgba(255,99,71,0.6);"></span>
-          <span>障碍物区域</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:16px; height:3px; background:#3b82f6;"></span>
-          <span>规划路径</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:10px; height:10px; background:#ff6b35; border-radius:50%;"></span>
-          <span>当前位置</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:10px; height:10px; background:#666; border-radius:50%;"></span>
-          <span>起点</span>
-        </div>
-        <div style="display:flex; align-items:center; gap:4px;">
-          <span style="display:inline-block; width:10px; height:10px; background:#1d4ed8; border-radius:50%;"></span>
-          <span>目标点</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 本地序列（时间控制直行/转向，不依赖 VIVE） -->
-    <div class="mode-btn-group" style="margin-top:10px;">
-      <button class="mode-btn" id="btnSeqStart" style="background:#ffa94d;">
-        Start Sequence
-      </button>
-      <button class="mode-btn" id="btnSeqStop" style="background:#f08080;">
-        Stop Sequence
-      </button>
-    </div>
-    <div class="slider-group" style="margin-top:10px;">
-      <label for="seqInput">Sequence (MODE,SPEED/Degree,DurationMs;...)</label>
-      <textarea id="seqInput" style="width:100%; height:70px; margin-top:8px; border-radius:10px; border:1px solid #ddd; padding:8px; font-size:0.9em;">F,50,5600;S,0,100;L,100,1500</textarea>
-      <small style="color:#777;">模式 F/B/L/R/S（S=暂停/停车），数值=速度或转向力度，持续时间 ms；用分号分隔。示例：F,50,2000;S,0,500;L,80,600;F,50,1500</small>
-      <div style="margin-top:8px; display:flex; gap:10px;">
-        <button class="mode-btn" id="btnSendSeq" style="flex:1; background:#a4d7a7;">Send Sequence</button>
-      </div>
-    </div>
-
-    <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
-      <h3 style="font-size: 0.9em; color: #888; margin-bottom: 10px; font-weight:500;">VIVE Tracking Data</h3>
-      <div style="text-align: left; font-size: 0.85em; color: #666; display:flex; flex-direction: column; gap:10px; background:#f8f9fa; padding:12px; border-radius:10px;">
-        <div style="display:flex; justify-content: space-between;">
-          <div>Center X: <span id="viveXVal">0</span></div>
-          <div>Center Y: <span id="viveYVal">0</span></div>
-          <div>Angle: <span id="viveAngleVal">0</span>°</div>
-        </div>
-        <div style="display:flex; gap:12px; flex-wrap: wrap;">
-          <div style="flex:1; min-width:130px; background:#fff; border-radius:8px; padding:8px;">
-            <div style="font-weight:600; color:#555;">Front (GPIO15 左)</div>
-            <div>Raw: X=<span id="frontRawX">0</span>, Y=<span id="frontRawY">0</span></div>
-            <div>Filtered: X=<span id="frontFiltX">0</span>, Y=<span id="frontFiltY">0</span></div>
-            <div>Status: <span id="frontStatus">0</span></div>
-          </div>
-          <div style="flex:1; min-width:130px; background:#fff; border-radius:8px; padding:8px;">
-            <div style="font-weight:600; color:#555;">Back (GPIO16 右)</div>
-            <div>Raw: X=<span id="backRawX">0</span>, Y=<span id="backRawY">0</span></div>
-            <div>Filtered: X=<span id="backFiltX">0</span>, Y=<span id="backFiltY">0</span></div>
-            <div>Status: <span id="backStatus">0</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 参数调整面板 -->
-    <div class="slider-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h3 style="font-size: 0.9em; color: #888; margin: 0; font-weight:500;">巡墙参数调整</h3>
-        <button id="paramToggle" style="background: #92C08E; border: none; color: white; padding: 5px 15px; border-radius: 8px; cursor: pointer; font-size: 0.8em;">展开</button>
-      </div>
-      <div id="paramPanel" style="display: none;">
-        <!-- 前方避障参数 -->
-        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
-          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">前方避障</h4>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前方避障距离: <span id="frontTurnThVal">250</span>mm</label>
-            <input type="range" id="frontTurnTh" min="100" max="500" value="250" step="10">
-          </div>
-          <div class="slider-group">
-            <label>紧急倒车距离: <span id="frontBackupThVal">50</span>mm</label>
-            <input type="range" id="frontBackupTh" min="20" max="150" value="50" step="5">
-          </div>
+        <div class="hint" style="margin-top:8px;">
+          - 参数滑块会自动实时发送（做了轻量节流）。<br />
+          - 默认值按当前代码写死值设置；浏览器会用 localStorage 记住你上次调的值。<br />
         </div>
 
-        <!-- 巡墙距离参数 -->
-        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
-          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">巡墙距离</h4>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>太近阈值: <span id="wallTooCloseVal">50</span>mm</label>
-            <input type="range" id="wallTooClose" min="20" max="100" value="50" step="5">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>理想距离: <span id="wallIdealVal">80</span>mm</label>
-            <input type="range" id="wallIdeal" min="50" max="150" value="80" step="5">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>太远阈值: <span id="wallTooFarVal">120</span>mm</label>
-            <input type="range" id="wallTooFar" min="80" max="200" value="120" step="5">
-          </div>
-          <div class="slider-group">
-            <label>丢墙阈值: <span id="rightLostWallVal">200</span>mm</label>
-            <input type="range" id="rightLostWall" min="150" max="300" value="200" step="10">
-          </div>
-        </div>
+        <details open>
+          <summary>P控制巡墙参数</summary>
+          <div class="paramGrid" id="secWall"></div>
+        </details>
 
-        <!-- 速度参数 -->
-        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
-          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">速度参数</h4>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前进速度: <span id="speedFwdVal">50</span></label>
-            <input type="range" id="speedFwd" min="20" max="100" value="50" step="5">
-          </div>
-          <div class="slider-group">
-            <label>倒车速度: <span id="speedBackVal">25</span></label>
-            <input type="range" id="speedBack" min="10" max="50" value="25" step="5">
-          </div>
-        </div>
+        <details open>
+          <summary>🔄 胡同逃脱（倒车+小半径转向）</summary>
+          <div class="paramGrid" id="secAlley"></div>
+        </details>
 
-        <!-- 转向力度参数 -->
-        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
-          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">转向力度</h4>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>原地旋转: <span id="turnSpinVal">120</span></label>
-            <input type="range" id="turnSpin" min="50" max="200" value="102" step="2">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>左转修正: <span id="turnCorrectVal">12</span></label>
-            <input type="range" id="turnCorrect" min="5" max="50" value="12" step="1">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>右转找墙: <span id="turnGentleVal">12</span></label>
-            <input type="range" id="turnGentle" min="5" max="50" value="12" step="1">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>强力找墙: <span id="turnHardFindVal">100</span></label>
-            <input type="range" id="turnHardFind" min="50" max="200" value="100" step="5">
-          </div>
-          <div class="slider-group">
-            <label>微调力度: <span id="turnTinyVal">10</span></label>
-            <input type="range" id="turnTiny" min="5" max="30" value="10" step="1">
-          </div>
-        </div>
+        <details>
+          <summary>📡 ToF 传感器标定</summary>
+          <div class="paramGrid" id="secToF"></div>
+        </details>
 
-        <!-- 时间参数 -->
-        <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 8px;">
-          <h4 style="font-size: 0.85em; color: #666; margin: 0 0 10px 0;">时间参数 (ms)</h4>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>卡死检测周期: <span id="stallCheckTimeVal">2000</span>ms</label>
-            <input type="range" id="stallCheckTime" min="500" max="4000" value="2000" step="100">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>出胡同直行: <span id="seqExitStraightVal">700</span>ms</label>
-            <input type="range" id="seqExitStraight" min="100" max="2000" value="700" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>出胡同转弯: <span id="seqExitTurnVal">200</span>ms</label>
-            <input type="range" id="seqExitTurn" min="50" max="1500" value="200" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>出胡同停车: <span id="seqExitStopVal">100</span>ms</label>
-            <input type="range" id="seqExitStop" min="50" max="1000" value="100" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前方避障倒车: <span id="seqFrontBackVal">300</span>ms</label>
-            <input type="range" id="seqFrontBack" min="50" max="1500" value="300" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前方避障预停: <span id="seqFrontPreStopVal">100</span>ms</label>
-            <input type="range" id="seqFrontPreStop" min="50" max="1000" value="100" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前方避障转向: <span id="seqFrontTurnVal">500</span>ms</label>
-            <input type="range" id="seqFrontTurn" min="100" max="2000" value="500" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>前方避障后停: <span id="seqFrontPostStopVal">100</span>ms</label>
-            <input type="range" id="seqFrontPostStop" min="50" max="1000" value="100" step="50">
-          </div>
-          <div class="slider-group" style="margin-bottom: 10px;">
-            <label>卡死倒车: <span id="seqStuckBackVal">800</span>ms</label>
-            <input type="range" id="seqStuckBack" min="100" max="2000" value="800" step="50">
-          </div>
-          <div class="slider-group">
-            <label>卡死旋转: <span id="seqStuckTurnVal">100</span>ms</label>
-            <input type="range" id="seqStuckTurn" min="50" max="1000" value="100" step="50">
-          </div>
-        </div>
+        <details>
+          <summary>手动规划（MP_PARAM）</summary>
+          <div class="paramGrid" id="secMp"></div>
+        </details>
       </div>
     </div>
 
-    <footer>Lab4.2 Team7 - Yui, Boru, Qingyun</footer>
+    <div class="footer">提示：连接 Servant AP 后打开本页；常见地址 <span class="kbd">192.168.4.1</span></div>
   </div>
 
-<script>
-  const speedSlider = document.getElementById("speedSlider");
-  const turnSlider = document.getElementById("turnSlider");
-  const speedVal = document.getElementById("speedVal");
-  const turnVal = document.getElementById("turnVal");
+  <script>
+    const statusPill = document.getElementById("statusPill");
+    const lastCmd = document.getElementById("lastCmd");
+    const uiLastCmd = document.getElementById("uiLastCmd");
+    const uiAutoState = document.getElementById("uiAutoState");
+    const uiViveState = document.getElementById("uiViveState");
+    const uiMpState = document.getElementById("uiMpState");
+    const cmdInput = document.getElementById("cmdInput");
+    const btnSendCmd = document.getElementById("btnSendCmd");
+    const btnStopNow = document.getElementById("btnStopNow");
+    // Advanced / legacy controls
+    const btnViveRefresh = document.getElementById("btnViveRefresh");
+    const viveXVal = document.getElementById("viveXVal");
+    const viveYVal = document.getElementById("viveYVal");
+    const viveAngleVal = document.getElementById("viveAngleVal");
+    const viveStatusVal = document.getElementById("viveStatusVal");
+    const frontRawX = document.getElementById("frontRawX");
+    const frontRawY = document.getElementById("frontRawY");
+    const backRawX = document.getElementById("backRawX");
+    const backRawY = document.getElementById("backRawY");
+    const frontFiltX = document.getElementById("frontFiltX");
+    const frontFiltY = document.getElementById("frontFiltY");
+    const backFiltX = document.getElementById("backFiltX");
+    const backFiltY = document.getElementById("backFiltY");
 
-  const buttons = {
-    F: document.getElementById("btnF"),
-    B: document.getElementById("btnB"),
-    L: document.getElementById("btnL"),
-    R: document.getElementById("btnR"),
-    S: document.getElementById("btnS")
-  };
+    // ToF live
+    const tofFVal = document.getElementById("tofFVal");
+    const tofR1Val = document.getElementById("tofR1Val");
+    const tofR2Val = document.getElementById("tofR2Val");
+    const tofAgeVal = document.getElementById("tofAgeVal");
 
-  // Update slider background gradient (Green to Light Grey)
-  function updateSliderBackground(slider) {
-    const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
-    slider.style.background = `linear-gradient(to right, #92C08E 0%, #92C08E ${value}%, #ececec ${value}%, #ececec 100%)`;
-  }
+    // Wall-follow live
+    const wfAutoVal = document.getElementById("wfAutoVal");
+    const wfStateVal = document.getElementById("wfStateVal");
+    const wfCmdVal = document.getElementById("wfCmdVal");
+    const wfTurnVal = document.getElementById("wfTurnVal");
+    const wfAngleVal = document.getElementById("wfAngleVal");
+    const wfErrVal = document.getElementById("wfErrVal");
+    const wfAgeVal = document.getElementById("wfAgeVal");
 
-  // Init sliders
-  updateSliderBackground(speedSlider);
-  updateSliderBackground(turnSlider);
+    const routeInput = document.getElementById("routeInput");
+    const btnSendRoute = document.getElementById("btnSendRoute");
+    const planTarget = document.getElementById("planTarget");
+    const btnPlan1 = document.getElementById("btnPlan1");
+    const btnPlanStop = document.getElementById("btnPlanStop");
+    const planObs = document.getElementById("planObs");
+    const btnPlanObs = document.getElementById("btnPlanObs");
+    const btnPlanObsOff = document.getElementById("btnPlanObsOff");
+    const btnPlanObsDefault = document.getElementById("btnPlanObsDefault");
+    const planBound = document.getElementById("planBound");
+    const btnPlanBound = document.getElementById("btnPlanBound");
+    const btnPlanSetStart = document.getElementById("btnPlanSetStart");
+    const btnPlanClearStart = document.getElementById("btnPlanClearStart");
+    const pathCanvas = document.getElementById("pathCanvas");
+    const pathStatus = document.getElementById("pathStatus");
 
-  // Auto Mode Logic
-  const btnAuto = document.getElementById("btnAuto");
-  let autoMode = false;
-  
-  btnAuto.onclick = () => {
-    autoMode = !autoMode;
-    if (autoMode) {
-      btnAuto.innerText = "STOP Auto";
-      btnAuto.style.background = "#ef9a9a"; // Soft Red
-      sendCommand("AUTO_ON");
-    } else {
-      btnAuto.innerText = "Start Auto";
-      btnAuto.style.background = "#F3CD35"; // Pastel Yellow
-      sendCommand("AUTO_OFF");
-    }
-  };
+    const seqInput = document.getElementById("seqInput");
+    const btnSendSeq = document.getElementById("btnSendSeq");
+    const btnSeqStart = document.getElementById("btnSeqStart");
+    const btnSeqStop = document.getElementById("btnSeqStop");
 
-  // Safety check: Stop Auto Mode on manual input
-  function checkManualOverride() {
-    if (autoMode) {
-      btnAuto.click(); // Trigger stop logic
-      console.log("Manual Override: Auto Mode Stopped");
-    }
-  }
-
-  // VIVE Switch Logic
-  const btnVive = document.getElementById("btnVive");
-  let viveEnabled = false; 
-
-  btnVive.onclick = () => {
-    viveEnabled = !viveEnabled;
-    if (viveEnabled) {
-      btnVive.innerText = "Disable VIVE";
-      btnVive.style.background = "#ce93d8"; // Soft Purple
-      sendCommand("VIVE_ON");
-      configState.viveActive = true;
-    } else {
-      btnVive.innerText = "Enable VIVE";
-      btnVive.style.background = "#E79DC3"; // Pastel Pink
-      sendCommand("VIVE_OFF");
-      configState.viveActive = false;
-      configState.pathPlanned = false; // VIVE关闭时清除路径规划状态
-    }
-    updateChecklist();
-  };
-
-  // Manual Planner Switch & Route Sender
-  const btnMp = document.getElementById("btnMp");
-  const btnSendRoute = document.getElementById("btnSendRoute");
-  const routeInput = document.getElementById("routeInput");
-  let mpEnabled = false;
-
-  btnMp.onclick = () => {
-    mpEnabled = !mpEnabled;
-    if (mpEnabled) {
-      btnMp.innerText = "Stop Manual Plan";
-      btnMp.style.background = "#f4a261";
-      sendCommand("MP_ON");
-    } else {
-      btnMp.innerText = "Start Manual Plan";
-      btnMp.style.background = "#9fc5e8";
-      sendCommand("MP_OFF");
-    }
-  };
-
-  btnSendRoute.onclick = () => {
-    const routeStr = routeInput.value.trim();
-    if (routeStr.length === 0) return;
-    sendCommand("MP_ROUTE:" + routeStr);
-  };
-
-  // New aligned-path mode
-  const btnPlan1 = document.getElementById("btnPlan1");
-  const btnPlanStop = document.getElementById("btnPlanStop");
-  const planTarget = document.getElementById("planTarget");
-  const btnPlanObs = document.getElementById("btnPlanObs");
-  const btnPlanObsOff = document.getElementById("btnPlanObsOff");
-  const planObs = document.getElementById("planObs");
-  const btnPlanObsDefault = document.getElementById("btnPlanObsDefault");
-  const btnPlanBound = document.getElementById("btnPlanBound");
-  const planBound = document.getElementById("planBound");
-  const pathCanvas = document.getElementById("pathCanvas");
-  const pathStatus = document.getElementById("pathStatus");
-  const btnPlanSetStart = document.getElementById("btnPlanSetStart");
-  const btnPlanClearStart = document.getElementById("btnPlanClearStart");
-  const planStartShow = document.getElementById("planStartShow");
-  const btnSeqStart = document.getElementById("btnSeqStart");
-  const btnSeqStop = document.getElementById("btnSeqStop");
-  const btnSendSeq = document.getElementById("btnSendSeq");
-  const seqInput = document.getElementById("seqInput");
-  const btnAttackStart = document.getElementById("btnAttackStart");
-  const btnAttackStop = document.getElementById("btnAttackStop");
-  
-  // Checklist 元素
-  const checkVive = document.getElementById("checkVive");
-  const checkBound = document.getElementById("checkBound");
-  const checkObs = document.getElementById("checkObs");
-  const checkTarget = document.getElementById("checkTarget");
-  const checkPath = document.getElementById("checkPath");
-  
-  // 配置状态追踪
-  let configState = {
-    viveActive: false,
-    boundSet: true,  // 默认边界已设置
-    obsSet: false,
-    targetSet: false,
-    pathPlanned: false
-  };
-  
-  // 更新 Checklist 显示
-  function updateChecklist() {
-    checkVive.innerText = configState.viveActive ? "✅" : "⚪";
-    checkBound.innerText = configState.boundSet ? "✅" : "⚪";
-    checkObs.innerText = configState.obsSet ? "✅" : "⚪";
-    checkTarget.innerText = configState.targetSet ? "✅" : "⚪";
-    checkPath.innerText = configState.pathPlanned ? "✅" : "⚪";
-  }
-
-  // 路径规划按钮处理
-  btnPlan1.onclick = () => {
-    const t = planTarget.value.trim();
-    const c = t.indexOf(",");
-    if (c < 1) { 
-      alert("❌ 请输入目标坐标，格式: x,y\n例如: 4500,3200"); 
-      return; 
-    }
-    if (!configState.viveActive) {
-      alert("⚠️ 请先启用 VIVE 定位系统！");
-      return;
-    }
-    configState.targetSet = true;
-    updateChecklist();
-    sendCommand("PLAN1:" + t);
-    pathStatus.innerText = "规划中...";
-    setTimeout(() => {
-      visualizePath();
-      configState.pathPlanned = true;
-      updateChecklist();
-      pathStatus.innerText = "✅ 路径已规划，执行中";
-    }, 500);
-  };
-  
-  btnPlanStop.onclick = () => {
-    sendCommand("PLAN_STOP");
-    pathStatus.innerText = "⏹️ 已停止";
-  };
-  
-  btnPlanObs.onclick = () => {
-    const obs = planObs.value.trim();
-    if (obs.length === 0) { 
-      alert("❌ 请输入障碍物参数\n格式: left,right,top,bottom,margin\n例如: 4100,4945,4240,3130,150"); 
-      return; 
-    }
-    sendCommand("PLAN_OBS:" + obs);
-    configState.obsSet = true;
-    updateChecklist();
-    visualizePath();
-    pathStatus.innerText = "障碍物已更新";
-  };
-  
-  btnPlanObsOff.onclick = () => {
-    sendCommand("PLAN_OBS_OFF");
-    configState.obsSet = false;
-    updateChecklist();
-    visualizePath();
-    pathStatus.innerText = "障碍物已禁用";
-  };
-  
-  btnPlanObsDefault.onclick = () => {
-    // 默认障碍: (4100,4945,4240,3130,150)
-    planObs.value = "4100,4945,4240,3130,150";
-    sendCommand("PLAN_OBS:" + planObs.value.trim());
-    configState.obsSet = true;
-    updateChecklist();
-    visualizePath();
-    pathStatus.innerText = "✅ 已加载默认障碍物";
-  };
-  
-  btnPlanBound.onclick = () => {
-    const b = planBound.value.trim();
-    const parts = b.split(",");
-    if (parts.length !== 4) { 
-      alert("❌ 请输入边界参数\n格式: xmin,xmax,ymax,ymin\n例如: 3920,5100,5700,1390"); 
-      return; 
-    }
-    sendCommand("PLAN_BOUND:" + b);
-    configState.boundSet = true;
-    updateChecklist();
-    visualizePath();
-    pathStatus.innerText = "✅ 边界已更新";
-  };
-  
-  btnPlanSetStart.onclick = () => {
-    const pose = getCurrentPose();
-    if (pose.x === 0 && pose.y === 0) {
-      alert("⚠️ VIVE 坐标无效，请确保 VIVE 系统正常工作");
-      return;
-    }
-    planStartShow.value = `${pose.x.toFixed(1)},${pose.y.toFixed(1)}`;
-    planStartShow.style.background = "#e3f2fd";
-    planStartShow.style.fontWeight = "600";
-    sendCommand(`PLAN_SET_START:${pose.x},${pose.y}`);
-    visualizePath();
-    pathStatus.innerText = "📍 起点已锁定";
-  };
-  
-  btnPlanClearStart.onclick = () => {
-    planStartShow.value = "使用 VIVE 实时坐标";
-    planStartShow.style.background = "#f9f9f9";
-    planStartShow.style.fontWeight = "normal";
-    sendCommand("PLAN_CLEAR_START");
-    visualizePath();
-    pathStatus.innerText = "📍 切换为实时起点";
-  };
-
-  // ========== 路径可视化 ==========
-  const ctx = pathCanvas.getContext("2d");
-
-  function parseCSV(str, expected) {
-    const parts = str.split(",").map(s => s.trim()).filter(s => s.length > 0);
-    if (expected && parts.length !== expected) return null;
-    return parts.map(parseFloat);
-  }
-
-  function getCurrentPose() {
-    const x = parseFloat(document.getElementById("viveXVal").innerText || "0");
-    const y = parseFloat(document.getElementById("viveYVal").innerText || "0");
-    return { x, y };
-  }
-
-  function computePath(start, target, obs, margin, bound) {
-    // 返回段数组或 null
-    const clamp = (p) => ({
-      x: Math.min(Math.max(p.x, bound.xmin), bound.xmax),
-      y: Math.min(Math.max(p.y, bound.ymin), bound.ymax)
-    });
-    const inside = (p) => (
-      p.x >= bound.xmin && p.x <= bound.xmax && p.y >= bound.ymin && p.y <= bound.ymax
-    );
-    // 仅归一化障碍，不在这里膨胀；避免后续重复加 margin
-    const normObs = () => ({
-      left: Math.min(obs.left, obs.right),
-      right: Math.max(obs.left, obs.right),
-      bottom: Math.min(obs.bottom, obs.top),
-      top: Math.max(obs.bottom, obs.top)
-    });
-    const hit = (seg, box) => {
-      if (insideBox(seg.a, box) || insideBox(seg.b, box)) return true;
-      if (Math.abs(seg.a.y - seg.b.y) < 1e-3) {
-        const y = seg.a.y;
-        if (y >= box.bottom && y <= box.top) {
-          const minx = Math.min(seg.a.x, seg.b.x);
-          const maxx = Math.max(seg.a.x, seg.b.x);
-          if (maxx >= box.left && minx <= box.right) return true;
-        }
-      } else {
-        const x = seg.a.x;
-        if (x >= box.left && x <= box.right) {
-          const miny = Math.min(seg.a.y, seg.b.y);
-          const maxy = Math.max(seg.a.y, seg.b.y);
-          if (maxy >= box.bottom && miny <= box.top) return true;
-        }
-      }
-      return false;
-    };
-    const insideBox = (p, b) => p.x >= b.left && p.x <= b.right && p.y >= b.bottom && p.y <= b.top;
-    const ok = (segs, box) => segs.every(s => inside(s.a) && inside(s.b) && !hit(s, box));
-
-    let S = clamp(start);
-    let T = clamp(target);
-    // 膨胀一次障碍，供碰撞检测使用
-    const base = normObs();
-    const box = {
-      left: base.left - margin,
-      right: base.right + margin,
-      bottom: base.bottom - margin,
-      top: base.top + margin
+    const btnAttackStart = document.getElementById("btnAttackStart");
+    const btnAttackStop = document.getElementById("btnAttackStop");
+    const speedSlider = document.getElementById("speedSlider");
+    const turnSlider = document.getElementById("turnSlider");
+    const speedVal = document.getElementById("speedVal");
+    const turnVal = document.getElementById("turnVal");
+    const btnAuto = document.getElementById("btnAuto");
+    const btnVive = document.getElementById("btnVive");
+    const btnMp = document.getElementById("btnMp");
+    const buttons = {
+      F: document.getElementById("btnF"),
+      B: document.getElementById("btnB"),
+      L: document.getElementById("btnL"),
+      R: document.getElementById("btnR"),
+      S: document.getElementById("btnS"),
+      PL: document.getElementById("btnPL"),  // 原地左转
+      PR: document.getElementById("btnPR"),  // 原地右转
     };
 
-    const segs = [];
-    // X->Y
-    segs[0] = { a: S, b: { x: T.x, y: S.y } };
-    segs[1] = { a: segs[0].b, b: T };
-    if (ok(segs, box)) return segs.slice(0, 2);
-    // Y->X
-    segs[0] = { a: S, b: { x: S.x, y: T.y } };
-    segs[1] = { a: segs[0].b, b: T };
-    if (ok(segs, box)) return segs.slice(0, 2);
+    let autoMode = false;
+    let viveEnabled = false;
+    let mpEnabled = false;
 
-    // 绕障拐点只基于已膨胀后的 box，不再二次加 margin
-    const Y_top = Math.min(Math.max(box.top, bound.ymin), bound.ymax);
-    const Y_bottom = Math.min(Math.max(box.bottom, bound.ymin), bound.ymax);
-    const X_left = Math.min(Math.max(box.left, bound.xmin), bound.xmax);
-    const X_right = Math.min(Math.max(box.right, bound.xmin), bound.xmax);
+    function setStatus(text) { statusPill.innerText = text; }
+    function sendCommand(cmd) {
+      lastCmd.innerText = cmd;
+      uiLastCmd.innerText = cmd;
+      setStatus("发送: " + cmd);
+      fetch("/cmd?data=" + encodeURIComponent(cmd))
+        .then(() => setStatus("就绪"))
+        .catch(() => setStatus("网络错误（检查连接/AP）"));
+    }
+    function sendParam(key, val) { sendCommand("PARAM:" + key + "=" + val); }
+    function sendMpParam(key, val) { sendCommand("MP_PARAM:" + key + "=" + val); }
 
-    const detours = [
-      [ {a:S, b:{x:S.x, y:Y_top}}, {a:{x:S.x, y:Y_top}, b:{x:T.x, y:Y_top}}, {a:{x:T.x, y:Y_top}, b:T} ],
-      [ {a:S, b:{x:S.x, y:Y_bottom}}, {a:{x:S.x, y:Y_bottom}, b:{x:T.x, y:Y_bottom}}, {a:{x:T.x, y:Y_bottom}, b:T} ],
-      [ {a:S, b:{x:X_left, y:S.y}}, {a:{x:X_left, y:S.y}, b:{x:X_left, y:T.y}}, {a:{x:X_left, y:T.y}, b:T} ],
-      [ {a:S, b:{x:X_right, y:S.y}}, {a:{x:X_right, y:S.y}, b:{x:X_right, y:T.y}}, {a:{x:X_right, y:T.y}, b:T} ],
+    // --- VIVE data ---
+    const vivePose = { x:0, y:0, angle:0, statusFront:0, statusBack:0 };
+    function updateViveData() {
+      fetch("/viveData")
+        .then(r => r.json())
+        .then(data => {
+          vivePose.x = parseFloat(data.x) || 0;
+          vivePose.y = parseFloat(data.y) || 0;
+          vivePose.angle = parseFloat(data.angle) || 0;
+          vivePose.statusFront = (data.status && typeof data.status.front !== "undefined") ? data.status.front : 0;
+          vivePose.statusBack  = (data.status && typeof data.status.back  !== "undefined") ? data.status.back  : 0;
+          viveXVal.innerText = vivePose.x.toFixed(1);
+          viveYVal.innerText = vivePose.y.toFixed(1);
+          viveAngleVal.innerText = vivePose.angle.toFixed(1);
+          viveStatusVal.innerText = `${vivePose.statusFront}/${vivePose.statusBack}`;
+
+          if (data.frontRaw) { frontRawX.innerText = data.frontRaw.x ?? 0; frontRawY.innerText = data.frontRaw.y ?? 0; }
+          if (data.backRaw)  { backRawX.innerText  = data.backRaw.x ?? 0;  backRawY.innerText  = data.backRaw.y ?? 0; }
+          if (data.frontFiltered) { frontFiltX.innerText = data.frontFiltered.x ?? 0; frontFiltY.innerText = data.frontFiltered.y ?? 0; }
+          if (data.backFiltered)  { backFiltX.innerText  = data.backFiltered.x ?? 0;  backFiltY.innerText  = data.backFiltered.y ?? 0; }
+        })
+        .catch(() => {});
+    }
+    if (btnViveRefresh) btnViveRefresh.onclick = () => updateViveData();
+    setInterval(updateViveData, 1000);
+
+    // --- ToF data ---
+    function updateToFData() {
+      fetch("/tofData")
+        .then(r => r.json())
+        .then(d => {
+          tofFVal.innerText = (typeof d.f !== "undefined") ? d.f : "-";
+          tofR1Val.innerText = (typeof d.r1 !== "undefined") ? d.r1 : "-";
+          tofR2Val.innerText = (typeof d.r2 !== "undefined") ? d.r2 : "-";
+          const age = (typeof d.age_ms !== "undefined") ? d.age_ms : 999999;
+          tofAgeVal.innerText = age + " ms";
+          // 简单变色：<500ms 绿色，<2000ms 橙色，否则红色
+          const c = (age < 500) ? "#22c55e" : (age < 2000 ? "#f59e0b" : "#ef4444");
+          tofAgeVal.style.color = c;
+        })
+        .catch(() => {});
+    }
+    setInterval(updateToFData, 200); // 原 80ms → 200ms，减少 WiFi 负载
+
+    // --- Wall-follow status ---
+    const WF_STATE_NAMES = [
+      "正常巡墙",        // WF_NORMAL
+      "前方障碍",        // WF_OBSTACLE_FRONT
+      "紧急倒车",        // WF_PANIC_BACKUP
+      "丢墙",            // WF_LOST_WALL
+      "拐角",            // WF_CORNER
+      "出拐角",          // WF_EXITING
+      "胡同倒车",        // WF_ALLEY_BACKUP
+      "胡同检测",        // WF_ALLEY_CHECK
+      "胡同小半径右转",   // WF_ALLEY_EXIT_TURN
+      "胡同直行稳定",     // WF_ALLEY_EXIT_FWD
+      "找墙右转",        // WF_SEEK_TURN
+      "找墙前进",        // WF_SEEK_FWD
     ];
-    for (const d of detours) {
-      if (ok(d, box)) return d;
+    function updateWfData() {
+      fetch("/wfData")
+        .then(r => r.json())
+        .then(d => {
+          const auto = (typeof d.auto !== "undefined") ? d.auto : 0;
+          const st = (typeof d.state !== "undefined") ? d.state : -1;
+          wfAutoVal.innerText = auto ? "ON" : "OFF";
+          wfAutoVal.style.color = auto ? "#22c55e" : "";
+          wfStateVal.innerText = (st >= 0 && st < WF_STATE_NAMES.length) ? WF_STATE_NAMES[st] : ("#" + st);
+          wfCmdVal.innerText = (typeof d.cmd !== "undefined") ? d.cmd : "-";
+          wfTurnVal.innerText = (typeof d.turn !== "undefined") ? d.turn : "-";
+          wfAngleVal.innerText = (typeof d.angle !== "undefined") ? d.angle : "-";
+          wfErrVal.innerText = (typeof d.err !== "undefined") ? d.err : "-";
+          const age = (typeof d.age_ms !== "undefined") ? d.age_ms : 999999;
+          wfAgeVal.innerText = age + " ms";
+          const c = (age < 500) ? "#22c55e" : (age < 2000 ? "#f59e0b" : "#ef4444");
+          wfAgeVal.style.color = c;
+        })
+        .catch(() => {});
     }
-    return null;
-  }
+    setInterval(updateWfData, 200); // 原 80ms → 200ms，减少 WiFi 负载
 
-  function drawPath(segs, obs, margin, bound, start, target) {
-    const w = pathCanvas.width, h = pathCanvas.height;
-    ctx.clearRect(0, 0, w, h);
-    const scaleX = w / (bound.xmax - bound.xmin);
-    const scaleY = h / (bound.ymax - bound.ymin);
-    const tx = (x) => (x - bound.xmin) * scaleX;
-    const ty = (y) => h - (y - bound.ymin) * scaleY;
+    // --- Debug Mode ---
+    const debugStatus = document.getElementById("debugStatus");
+    const debugLogArea = document.getElementById("debugLogArea");
+    const btnDebugOn = document.getElementById("btnDebugOn");
+    const btnDebugOff = document.getElementById("btnDebugOff");
+    const btnDebugClear = document.getElementById("btnDebugClear");
+    let debugEnabled = false;
 
-    // 边界
-    ctx.strokeStyle = "#68b684";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(0, 0, w, h);
-
-    // 绘制网格（帮助定位）
-    ctx.strokeStyle = "#e0e0e0";
-    ctx.lineWidth = 1;
-    const gridStepX = (bound.xmax - bound.xmin) / 5;
-    const gridStepY = (bound.ymax - bound.ymin) / 5;
-    for (let i = 1; i < 5; i++) {
-      const gx = tx(bound.xmin + gridStepX * i);
-      ctx.beginPath();
-      ctx.moveTo(gx, 0);
-      ctx.lineTo(gx, h);
-      ctx.stroke();
-    }
-    for (let i = 1; i < 5; i++) {
-      const gy = ty(bound.ymin + gridStepY * i);
-      ctx.beginPath();
-      ctx.moveTo(0, gy);
-      ctx.lineTo(w, gy);
-      ctx.stroke();
-    }
-
-    // 障碍+margin
-    if (configState.obsSet) {
-      const box = {
-        left: Math.min(obs.left, obs.right) - margin,
-        right: Math.max(obs.left, obs.right) + margin,
-        bottom: Math.min(obs.bottom, obs.top) - margin,
-        top: Math.max(obs.bottom, obs.top) + margin
-      };
-      ctx.fillStyle = "rgba(255,99,71,0.25)";
-      ctx.strokeStyle = "rgba(255,99,71,0.8)";
-      ctx.lineWidth = 2;
-      const ox = tx(box.left), oy = ty(box.top);
-      const ow = (box.right - box.left) * scaleX;
-      const oh = (box.top - box.bottom) * scaleY;
-      ctx.fillRect(ox, oy, ow, oh);
-      ctx.strokeRect(ox, oy, ow, oh);
+    function updateDebugLog() {
+      if (!debugEnabled) return;
+      fetch("/debugLog")
+        .then(r => r.json())
+        .then(d => {
+          debugStatus.innerText = d.enabled ? "ON" : "OFF";
+          debugStatus.style.color = d.enabled ? "#22c55e" : "#ef4444";
+          // 解码转义字符
+          let log = d.log || "";
+          log = log.replace(/\\n/g, "\n").replace(/\\"/g, '"');
+          debugLogArea.value = log;
+          // 自动滚动到底部
+          debugLogArea.scrollTop = debugLogArea.scrollHeight;
+        })
+        .catch(() => {});
     }
 
-    // 规划路径
-    if (segs) {
-      ctx.strokeStyle = "#3b82f6";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(tx(segs[0].a.x), ty(segs[0].a.y));
-      segs.forEach(s => ctx.lineTo(tx(s.b.x), ty(s.b.y)));
-      ctx.stroke();
-      
-      // 绘制路径节点
-      ctx.fillStyle = "#3b82f6";
-      segs.forEach(s => {
-        ctx.beginPath();
-        ctx.arc(tx(s.b.x), ty(s.b.y), 3, 0, Math.PI * 2);
-        ctx.fill();
+    btnDebugOn.onclick = () => {
+      fetch("/debugOn").then(() => {
+        debugEnabled = true;
+        debugStatus.innerText = "ON";
+        debugStatus.style.color = "#22c55e";
+        setStatus("调试模式已开启");
       });
-    }
+    };
+    btnDebugOff.onclick = () => {
+      fetch("/debugOff").then(() => {
+        debugEnabled = false;
+        debugStatus.innerText = "OFF";
+        debugStatus.style.color = "#ef4444";
+        setStatus("调试模式已关闭");
+      });
+    };
+    btnDebugClear.onclick = () => {
+      fetch("/debugClear").then(() => {
+        debugLogArea.value = "";
+        setStatus("日志已清空");
+      });
+    };
 
-    // 绘制点的辅助函数
-    const drawDot = (p, color, size = 5, label = "") => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(tx(p.x), ty(p.y), size, 0, Math.PI * 2);
-      ctx.fill();
-      // 添加白色边框使其更明显
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      
-      // 添加标签
-      if (label) {
-        ctx.fillStyle = color;
-        ctx.font = "bold 11px Arial";
-        ctx.fillText(label, tx(p.x) + size + 4, ty(p.y) + 4);
+    // 调试日志每 500ms 刷新一次
+    setInterval(updateDebugLog, 500);
+
+    // --- Auto/VIVE/MP toggles ---
+    // 初始化按钮配色（保持“之前网页”的颜色）
+    btnAuto.style.background = "#F3CD35";
+    btnVive.style.background = "#E79DC3";
+    btnMp.style.background = "#9fc5e8";
+
+    btnAuto.onclick = () => {
+      autoMode = !autoMode;
+      if (autoMode) {
+        btnAuto.innerText = "STOP Auto";
+        btnAuto.style.background = "#ef9a9a";
+        uiAutoState.innerText = "ON";
+        uiAutoState.style.color = "#22c55e";
+        sendCommand("AUTO_ON");
+      } else {
+        btnAuto.innerText = "Start Auto";
+        btnAuto.style.background = "#F3CD35";
+        uiAutoState.innerText = "OFF";
+        uiAutoState.style.color = "";
+        sendCommand("AUTO_OFF");
       }
     };
-    
-    // 起点（灰色）
-    drawDot(start, "#666", 6, "起点");
-    
-    // 目标点（蓝色）
-    if (configState.targetSet) {
-      drawDot(target, "#1d4ed8", 6, "目标");
-    }
-    
-    // 当前位置（橙色，实时更新）
-    const current = getCurrentPose();
-    if (current.x !== 0 || current.y !== 0) {
-      drawDot(current, "#ff6b35", 7, "当前");
-    }
-  }
+    btnVive.onclick = () => {
+      viveEnabled = !viveEnabled;
+      btnVive.innerText = viveEnabled ? "Disable VIVE" : "Enable VIVE";
+      btnVive.style.background = viveEnabled ? "#ce93d8" : "#E79DC3";
+      uiViveState.innerText = viveEnabled ? "ON" : "OFF";
+      uiViveState.style.color = viveEnabled ? "#22c55e" : "";
+      sendCommand(viveEnabled ? "VIVE_ON" : "VIVE_OFF");
+    };
+    btnMp.onclick = () => {
+      mpEnabled = !mpEnabled;
+      btnMp.innerText = mpEnabled ? "Stop Manual Plan" : "Start Manual Plan";
+      btnMp.style.background = mpEnabled ? "#f4a261" : "#9fc5e8";
+      uiMpState.innerText = mpEnabled ? "ON" : "OFF";
+      uiMpState.style.color = mpEnabled ? "#22c55e" : "";
+      sendCommand(mpEnabled ? "MP_ON" : "MP_OFF");
+    };
 
-  function visualizePath() {
-    // 获取边界
-    const bArr = parseCSV(planBound.value.trim(), 4);
-    if (!bArr) { 
-      pathStatus.innerText = "❌ 边界格式错误"; 
-      return; 
-    }
-    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
-    
-    // 获取起点
-    const pose = (planStartShow.value && planStartShow.value !== "使用 VIVE 实时坐标")
-      ? (() => { 
-          const p = parseCSV(planStartShow.value, 2); 
-          return p ? { x:p[0], y:p[1] } : getCurrentPose(); 
-        })()
-      : getCurrentPose();
-    
-    // 获取目标点（可选）
-    const t = parseCSV(planTarget.value.trim(), 2);
-    const target = t ? { x: t[0], y: t[1] } : null;
-    
-    // 获取障碍物（可选）
-    const obsArr = parseCSV(planObs.value.trim());
-    const obs = (obsArr && obsArr.length >= 4) ? {
-      left: obsArr[0], right: obsArr[1], top: obsArr[2], bottom: obsArr[3]
-    } : { left:0, right:0, top:0, bottom:0 };
-    const margin = (obsArr && obsArr.length >= 5) ? obsArr[4] : 0;
-    
-    // 如果有目标点，尝试规划路径
-    let segs = null;
-    if (target) {
-      segs = computePath(pose, target, obs, margin, bound);
-      if (!segs) {
-        pathStatus.innerText = "⚠️ 无可行路径";
-      }
-    }
-    
-    // 无论是否有路径，都绘制当前状态
-    drawPath(segs, obs, margin, bound, pose, target);
-    
-    // 更新状态文本
-    if (!target) {
-      pathStatus.innerText = "等待设置目标点...";
-    } else if (segs) {
-      pathStatus.innerText = `✅ 路径规划完成 (${segs.length}段)`;
-    }
-  }
+    function checkManualOverride() { if (autoMode) btnAuto.click(); }
 
-  // Manual planner param update helper
-  function sendMpParam(key, val) {
-    sendCommand("MP_PARAM:" + key + "=" + val);
-  }
+    // --- Sliders (manual) ---
+    speedSlider.oninput = function() { speedVal.innerText = this.value; };
+    turnSlider.oninput = function() { turnVal.innerText = this.value; };
 
-  // Sequence control (local timed straight/turn)
-  btnSendSeq.onclick = () => {
-    const seq = seqInput.value.trim();
-    if (seq.length === 0) return;
-    sendCommand("SEQ:" + seq);
-  };
-  btnSeqStart.onclick = () => sendCommand("SEQ_START");
-  btnSeqStop.onclick = () => sendCommand("SEQ_STOP");
+    // --- Manual state ---
+    let isMoving = false;
+    let currentMoveDirection = null;
+    let isTurning = false;
+    let currentTurnDirection = null;
 
-  // Attack servo control
-  let attackOn = false;
-  btnAttackStart.onclick = () => {
-    attackOn = true;
-    btnAttackStart.innerText = "Attacking...";
-    btnAttackStart.style.background = "#e57373";
-    btnAttackStop.style.background = "#b5d8f7";
-    sendCommand("SV1");
-  };
-  btnAttackStop.onclick = () => {
-    attackOn = false;
-    btnAttackStart.innerText = "Start Attack";
-    btnAttackStart.style.background = "#f7b5b5";
-    btnAttackStop.style.background = "#90caf9";
-    sendCommand("SV0");
-  };
-
-  // State
-  let isMoving = false;
-  let currentMoveDirection = null;    
-  let isTurning = false;
-  let currentTurnDirection = null;    
-
-  // Slider events
-  speedSlider.oninput = function() {
-    speedVal.innerText = this.value + "%";
-    updateSliderBackground(this);
-  };
-  turnSlider.oninput = function() {
-    turnVal.innerText = this.value + "%";
-    updateSliderBackground(this);
-  };
-
-  function sendCommand(cmd) {
-    fetch("/cmd?data=" + encodeURIComponent(cmd)).catch(err => console.log(err));
-  }
-
-  // Adjust Speed slider (Q/W)
-  function adjustSpeed(delta) {
-    let v = parseInt(speedSlider.value) + delta;
-    v = Math.max(0, Math.min(100, v));
-    speedSlider.value = v;
-    speedVal.innerText = v + "%";
-    updateSliderBackground(speedSlider);
-
-    if (isMoving && currentMoveDirection) {
-      sendCommand(currentMoveDirection + v);
-    }
-  }
-
-  // Adjust Turn slider (A/S)
-  function adjustTurn(delta) {
-    let v = parseInt(turnSlider.value) + delta;
-    v = Math.max(0, Math.min(100, v));
-    turnSlider.value = v;
-    turnVal.innerText = v + "%";
-    updateSliderBackground(turnSlider);
-
-    if (isTurning && currentTurnDirection) {
-      sendCommand(currentTurnDirection + v);
-    }
-  }
-
-  // Mouse Control
-  buttons.F.onmousedown = () => {
-    checkManualOverride();
-    isMoving = true;
-    currentMoveDirection = "F";
-    isTurning = false;
-    currentTurnDirection = null;
-    sendCommand("F" + speedSlider.value);
-  };
-  buttons.B.onmousedown = () => {
-    checkManualOverride();
-    isMoving = true;
-    currentMoveDirection = "B";
-    isTurning = false;
-    currentTurnDirection = null;
-    sendCommand("B" + speedSlider.value);
-  };
-  buttons.L.onmousedown = () => {
-    checkManualOverride();
-    isTurning = true;
-    currentTurnDirection = "L";
-    isMoving = false;
-    currentMoveDirection = null;
-    sendCommand("L" + turnSlider.value);
-  };
-  buttons.R.onmousedown = () => {
-    checkManualOverride();
-    isTurning = true;
-    currentTurnDirection = "R";
-    isMoving = false;
-    currentMoveDirection = null;
-    sendCommand("R" + turnSlider.value);
-  };
-  buttons.S.onmousedown = () => {
-    checkManualOverride();
-    isMoving = false;
-    isTurning = false;
-    currentMoveDirection = null;
-    currentTurnDirection = null;
-    sendCommand("S");
-  };
-
-  buttons.F.onmouseup =
-  buttons.B.onmouseup =
-  buttons.L.onmouseup =
-  buttons.R.onmouseup = () => {
-    isMoving = false;
-    isTurning = false;
-    currentMoveDirection = null;
-    currentTurnDirection = null;
-    sendCommand("S");
-  };
-
-  // Keyboard Control
-  document.addEventListener("keydown", (e) => {
-    if (e.repeat) return;
-
-    switch (e.key) {
-      case "ArrowUp":
-        checkManualOverride();
-        isMoving = true;
-        currentMoveDirection = "F";
-        isTurning = false;
-        currentTurnDirection = null;
-        sendCommand("F" + speedSlider.value);
-        break;
-      case "ArrowDown":
-        checkManualOverride();
-        isMoving = true;
-        currentMoveDirection = "B";
-        isTurning = false;
-        currentTurnDirection = null;
-        sendCommand("B" + speedSlider.value);
-        break;
-      case "ArrowLeft":
-        checkManualOverride();
-        isTurning = true;
-        currentTurnDirection = "L";
-        isMoving = false;
-        currentMoveDirection = null;
-        sendCommand("L" + turnSlider.value);
-        break;
-      case "ArrowRight":
-        checkManualOverride();
-        isTurning = true;
-        currentTurnDirection = "R";
-        isMoving = false;
-        currentMoveDirection = null;
-        sendCommand("R" + turnSlider.value);
-        break;
-      case "q":
-      case "Q":
-        adjustSpeed(-5);
-        break;
-      case "w":
-      case "W":
-        adjustSpeed(+5);
-        break;
-      case "a":
-      case "A":
-        adjustTurn(-5);
-        break;
-      case "s":
-      case "S":
-        adjustTurn(+5);
-        break;
-    }
-  });
-
-  document.addEventListener("keyup", (e) => {
-    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+    function stopNow() {
       isMoving = false;
       isTurning = false;
       currentMoveDirection = null;
       currentTurnDirection = null;
       sendCommand("S");
     }
-  });
 
-  // VIVE Data Update
-  function updateViveData() {
-    fetch("/viveData")
-      .then(response => response.json())
-      .then(data => {
-        document.getElementById("viveXVal").innerText = parseFloat(data.x).toFixed(1);
-        document.getElementById("viveYVal").innerText = parseFloat(data.y).toFixed(1);
-        document.getElementById("viveAngleVal").innerText = parseFloat(data.angle).toFixed(1);
-        
-        // 检查VIVE是否正常工作（两个tracker都有信号）
-        const viveWorking = data.status && (data.status.front >= 2 && data.status.back >= 2);
-        if (viveWorking && !configState.viveActive) {
-          configState.viveActive = true;
-          updateChecklist();
-        } else if (!viveWorking && configState.viveActive) {
-          configState.viveActive = false;
-          updateChecklist();
+    function bindHold(btn, onPress) {
+      btn.onmousedown = () => { checkManualOverride(); onPress(); };
+      btn.onmouseup = stopNow;
+      btn.onmouseleave = stopNow;
+      btn.ontouchstart = (e) => { e.preventDefault(); checkManualOverride(); onPress(); };
+      btn.ontouchend = (e) => { e.preventDefault(); stopNow(); };
+    }
+    bindHold(buttons.F, () => { isMoving = true; currentMoveDirection = "F"; isTurning=false; sendCommand("F" + speedSlider.value); });
+    bindHold(buttons.B, () => { isMoving = true; currentMoveDirection = "B"; isTurning=false; sendCommand("B" + speedSlider.value); });
+    bindHold(buttons.L, () => { isTurning = true; currentTurnDirection = "L"; isMoving=false; sendCommand("L" + turnSlider.value); });
+    bindHold(buttons.R, () => { isTurning = true; currentTurnDirection = "R"; isMoving=false; sendCommand("R" + turnSlider.value); });
+    // 原地转向（Pivot）
+    bindHold(buttons.PL, () => { isTurning = true; currentTurnDirection = "PL"; isMoving=false; sendCommand("PL" + turnSlider.value); });
+    bindHold(buttons.PR, () => { isTurning = true; currentTurnDirection = "PR"; isMoving=false; sendCommand("PR" + turnSlider.value); });
+    buttons.S.onclick = () => { checkManualOverride(); stopNow(); };
+
+    // Keyboard mapping (保持：↑↓←→ 控车；Q/W 调速度；A/S 调转向)
+    function adjustSpeed(delta) {
+      let v = parseInt(speedSlider.value) + delta;
+      v = Math.max(0, Math.min(100, v));
+      speedSlider.value = v;
+      speedVal.innerText = v;
+      if (isMoving && currentMoveDirection) sendCommand(currentMoveDirection + v);
+    }
+    function adjustTurn(delta) {
+      let v = parseInt(turnSlider.value) + delta;
+      v = Math.max(0, Math.min(100, v));
+      turnSlider.value = v;
+      turnVal.innerText = v;
+      if (isTurning && currentTurnDirection) sendCommand(currentTurnDirection + v);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.repeat) return;
+      // 如果正在输入框/文本框里打字，不抢键盘控制（避免误触发小车）
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      switch (e.key) {
+        case "ArrowUp":
+          checkManualOverride();
+          isMoving = true; currentMoveDirection = "F";
+          isTurning = false; currentTurnDirection = null;
+          sendCommand("F" + speedSlider.value);
+          break;
+        case "ArrowDown":
+          checkManualOverride();
+          isMoving = true; currentMoveDirection = "B";
+          isTurning = false; currentTurnDirection = null;
+          sendCommand("B" + speedSlider.value);
+          break;
+        case "ArrowLeft":
+          checkManualOverride();
+          isTurning = true; currentTurnDirection = "L";
+          isMoving = false; currentMoveDirection = null;
+          sendCommand("L" + turnSlider.value);
+          break;
+        case "ArrowRight":
+          checkManualOverride();
+          isTurning = true; currentTurnDirection = "R";
+          isMoving = false; currentMoveDirection = null;
+          sendCommand("R" + turnSlider.value);
+          break;
+        case " ":
+          checkManualOverride();
+          stopNow();
+          break;
+        case "q":
+        case "Q":
+          adjustSpeed(-5);
+          break;
+        case "w":
+        case "W":
+          adjustSpeed(+5);
+          break;
+        case "a":
+        case "A":
+          adjustTurn(-5);
+          break;
+        case "s":
+        case "S":
+          adjustTurn(+5);
+          break;
+      }
+    });
+    document.addEventListener("keyup", (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) stopNow();
+    });
+    window.addEventListener("blur", () => stopNow());
+
+    // Quick command box
+    btnSendCmd.onclick = () => {
+      const v = (cmdInput.value || "").trim();
+      if (v.length === 0) return;
+      // 如果用户只输入了 "S"/"AUTO_ON" 等，直接发送
+      sendCommand(v);
+    };
+    btnStopNow.onclick = () => { checkManualOverride(); stopNow(); };
+    cmdInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        btnSendCmd.click();
+      }
+    });
+
+    // --- Legacy command buttons wiring ---
+    if (btnSendRoute) btnSendRoute.onclick = () => {
+      const v = (routeInput.value || "").trim();
+      if (v.length) sendCommand("MP_ROUTE:" + v);
+    };
+    if (btnPlan1) btnPlan1.onclick = () => {
+      const t = (planTarget.value || "").trim();
+      if (!t.includes(",")) { pathStatus.innerText = "目标格式错误"; return; }
+      sendCommand("PLAN1:" + t);
+      pathStatus.innerText = "已发送 PLAN1";
+      setTimeout(drawPreview, 300);
+    };
+    if (btnPlanStop) btnPlanStop.onclick = () => { sendCommand("PLAN_STOP"); pathStatus.innerText = "已停止"; };
+    if (btnPlanObsDefault) btnPlanObsDefault.onclick = () => {
+      planObs.value = "4072,4950,4257,3120,150";
+    };
+    if (btnPlanObs) btnPlanObs.onclick = () => {
+      const o = (planObs.value || "").trim();
+      if (!o.includes(",")) { pathStatus.innerText = "障碍格式错误"; return; }
+      sendCommand("PLAN_OBS:" + o);
+      pathStatus.innerText = "已更新障碍";
+      setTimeout(drawPreview, 300);
+    };
+    if (btnPlanObsOff) btnPlanObsOff.onclick = () => { sendCommand("PLAN_OBS_OFF"); pathStatus.innerText = "障碍已禁用"; setTimeout(drawPreview, 300); };
+    if (btnPlanBound) btnPlanBound.onclick = () => {
+      const b = (planBound.value || "").trim();
+      if (b.split(",").length !== 4) { pathStatus.innerText = "边界格式错误"; return; }
+      sendCommand("PLAN_BOUND:" + b);
+      pathStatus.innerText = "边界已更新";
+      setTimeout(drawPreview, 300);
+    };
+    if (btnPlanSetStart) btnPlanSetStart.onclick = () => {
+      // 使用当前 VIVE 坐标作为起点锁定
+      sendCommand(`PLAN_SET_START:${vivePose.x},${vivePose.y}`);
+      pathStatus.innerText = "起点已锁定";
+      setTimeout(drawPreview, 300);
+    };
+    if (btnPlanClearStart) btnPlanClearStart.onclick = () => { sendCommand("PLAN_CLEAR_START"); pathStatus.innerText = "已清除起点"; setTimeout(drawPreview, 300); };
+
+    if (btnSendSeq) btnSendSeq.onclick = () => {
+      const s = (seqInput.value || "").trim();
+      if (s.length) sendCommand("SEQ:" + s);
+    };
+    if (btnSeqStart) btnSeqStart.onclick = () => sendCommand("SEQ_START");
+    if (btnSeqStop) btnSeqStop.onclick = () => sendCommand("SEQ_STOP");
+
+    if (btnAttackStart) btnAttackStart.onclick = () => sendCommand("SV1");
+    if (btnAttackStop) btnAttackStop.onclick = () => sendCommand("SV0");
+
+    // --- Simple preview drawing (not the real planner, just visualization) ---
+    function parseCSV(str, n) {
+      const parts = (str || "").split(",").map(s => s.trim()).filter(s => s.length);
+      if (n && parts.length !== n) return null;
+      const vals = parts.map(s => parseFloat(s));
+      if (vals.some(v => Number.isNaN(v))) return null;
+      return vals;
+    }
+    function drawPreview() {
+      if (!pathCanvas) return;
+      const ctx = pathCanvas.getContext("2d");
+      const w = pathCanvas.width, h = pathCanvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const b = parseCSV(planBound.value, 4) || [3920,5100,5700,1390];
+      const bound = { xmin:b[0], xmax:b[1], ymax:b[2], ymin:b[3] };
+      const tx = x => (x - bound.xmin) / (bound.xmax - bound.xmin) * w;
+      const ty = y => h - (y - bound.ymin) / (bound.ymax - bound.ymin) * h;
+
+      // boundary
+      ctx.strokeStyle = "rgba(134,239,172,0.9)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(0, 0, w, h);
+
+      // obstacle (optional)
+      const o = parseCSV(planObs.value, null);
+      if (o && o.length >= 4) {
+        const left = Math.min(o[0], o[1]);
+        const right = Math.max(o[0], o[1]);
+        const top = Math.max(o[2], o[3]);
+        const bottom = Math.min(o[2], o[3]);
+        const margin = (o.length >= 5) ? o[4] : 0;
+        ctx.fillStyle = "rgba(255,99,71,0.20)";
+        ctx.strokeStyle = "rgba(255,99,71,0.70)";
+        ctx.lineWidth = 2;
+        const x = tx(left - margin), y = ty(top + margin);
+        const ww = (right - left + 2*margin) / (bound.xmax - bound.xmin) * w;
+        const hh = (top - bottom + 2*margin) / (bound.ymax - bound.ymin) * h;
+        ctx.fillRect(x, y, ww, hh);
+        ctx.strokeRect(x, y, ww, hh);
+      }
+
+      // start (current vive)
+      const S = { x:vivePose.x, y:vivePose.y };
+      const Tarr = parseCSV(planTarget.value, 2);
+      const T = Tarr ? { x:Tarr[0], y:Tarr[1] } : null;
+
+      function dot(p, color, r, label) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(tx(p.x), ty(p.y), r, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        if (label) {
+          ctx.fillStyle = color;
+          ctx.font = "bold 12px Arial";
+          ctx.fillText(label, tx(p.x)+r+4, ty(p.y)+4);
         }
-        
-        if (data.frontRaw && data.backRaw) {
-          document.getElementById("frontRawX").innerText = data.frontRaw.x || 0;
-          document.getElementById("frontRawY").innerText = data.frontRaw.y || 0;
-          document.getElementById("backRawX").innerText = data.backRaw.x || 0;
-          document.getElementById("backRawY").innerText = data.backRaw.y || 0;
-        }
-        if (data.frontFiltered && data.backFiltered) {
-          document.getElementById("frontFiltX").innerText = data.frontFiltered.x || 0;
-          document.getElementById("frontFiltY").innerText = data.frontFiltered.y || 0;
-          document.getElementById("backFiltX").innerText = data.backFiltered.x || 0;
-          document.getElementById("backFiltY").innerText = data.backFiltered.y || 0;
-        }
-        if (data.status) {
-          document.getElementById("frontStatus").innerText = data.status.front;
-          document.getElementById("backStatus").innerText = data.status.back;
-        }
-      })
-      .catch(err => console.log("VIVE data error:", err));
-  }
+      }
+      dot(S, "#ff6b35", 6, "当前");
+      if (T) dot(T, "#60a5fa", 6, "目标");
 
-  setInterval(updateViveData, 1000);
-  
-  // 定时更新路径可视化（实时显示当前位置）
-  setInterval(() => {
-    if (configState.pathPlanned && configState.targetSet) {
-      visualizePath();
-    }
-  }, 2000);  // 每2秒更新一次路径显示
-  
-  // 监听目标点输入
-  planTarget.addEventListener('input', () => {
-    const val = planTarget.value.trim();
-    if (val.indexOf(",") > 0) {
-      configState.targetSet = true;
-      configState.pathPlanned = false;
-      updateChecklist();
-      visualizePath();  // 预览目标点位置
-    } else {
-      configState.targetSet = false;
-      configState.pathPlanned = false;
-      updateChecklist();
-    }
-  });
-  
-  // 监听障碍物输入
-  planObs.addEventListener('input', () => {
-    const val = planObs.value.trim();
-    if (val.split(",").length >= 4) {
-      visualizePath();  // 实时预览障碍物
-    }
-  });
-  
-  // Canvas点击设置目标点功能
-  pathCanvas.addEventListener('click', (e) => {
-    const rect = pathCanvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // 转换canvas坐标到场地坐标
-    const bArr = parseCSV(planBound.value.trim(), 4);
-    if (!bArr) return;
-    const bound = { xmin: bArr[0], xmax: bArr[1], ymax: bArr[2], ymin: bArr[3] };
-    
-    const w = pathCanvas.width, h = pathCanvas.height;
-    const scaleX = w / (bound.xmax - bound.xmin);
-    const scaleY = h / (bound.ymax - bound.ymin);
-    
-    const worldX = Math.round(bound.xmin + (x / rect.width) * w / scaleX);
-    const worldY = Math.round(bound.ymax - (y / rect.height) * h / scaleY);
-    
-    planTarget.value = `${worldX},${worldY}`;
-    configState.targetSet = true;
-    configState.pathPlanned = false;
-    updateChecklist();
-    visualizePath();
-    
-    pathStatus.innerText = `🎯 目标点已选择: (${worldX}, ${worldY})`;
-  });
-  
-  // 初始化 checklist
-  updateChecklist();
-  
-  // 初始可视化（显示边界和默认设置）
-  setTimeout(() => {
-    visualizePath();
-  }, 1000);
-
-  // 参数调整面板切换
-  const paramToggle = document.getElementById("paramToggle");
-  const paramPanel = document.getElementById("paramPanel");
-  // 手动规划参数面板
-  const mpParamToggle = document.createElement("button");
-  mpParamToggle.id = "mpParamToggle";
-  mpParamToggle.innerText = "展开";
-  mpParamToggle.style = "background:#92C08E;border:none;color:white;padding:5px 15px;border-radius:8px;cursor:pointer;font-size:0.8em;";
-
-  const mpParamPanel = document.createElement("div");
-  mpParamPanel.id = "mpParamPanel";
-  mpParamPanel.style.display = "none";
-  mpParamPanel.innerHTML = `
-    <div style="margin-top:15px; padding:10px; background:#f8f9fa; border-radius:8px;">
-      <h4 style="font-size:0.85em; color:#666; margin:0 0 10px 0;">手动规划参数</h4>
-      <div id="mpParamSliders"></div>
-    </div>
-  `;
-
-  paramToggle.onclick = () => {
-    if (paramPanel.style.display === "none") {
-      paramPanel.style.display = "block";
-      paramToggle.innerText = "收起";
-    } else {
-      paramPanel.style.display = "none";
-      paramToggle.innerText = "展开";
-    }
-  };
-
-  // 参数滑块初始化
-  const paramSliders = {
-    "FRONT_TURN_TH": { slider: document.getElementById("frontTurnTh"), val: document.getElementById("frontTurnThVal") },
-    "FRONT_BACKUP_TH": { slider: document.getElementById("frontBackupTh"), val: document.getElementById("frontBackupThVal") },
-    "WALL_TOO_CLOSE": { slider: document.getElementById("wallTooClose"), val: document.getElementById("wallTooCloseVal") },
-    "WALL_IDEAL": { slider: document.getElementById("wallIdeal"), val: document.getElementById("wallIdealVal") },
-    "WALL_TOO_FAR": { slider: document.getElementById("wallTooFar"), val: document.getElementById("wallTooFarVal") },
-    "RIGHT_LOST_WALL": { slider: document.getElementById("rightLostWall"), val: document.getElementById("rightLostWallVal") },
-    "SPEED_FWD": { slider: document.getElementById("speedFwd"), val: document.getElementById("speedFwdVal") },
-    "SPEED_BACK": { slider: document.getElementById("speedBack"), val: document.getElementById("speedBackVal") },
-    "TURN_SPIN": { slider: document.getElementById("turnSpin"), val: document.getElementById("turnSpinVal") },
-    "TURN_CORRECT": { slider: document.getElementById("turnCorrect"), val: document.getElementById("turnCorrectVal") },
-    "TURN_GENTLE": { slider: document.getElementById("turnGentle"), val: document.getElementById("turnGentleVal") },
-    "TURN_HARD_FIND": { slider: document.getElementById("turnHardFind"), val: document.getElementById("turnHardFindVal") },
-    "TURN_TINY": { slider: document.getElementById("turnTiny"), val: document.getElementById("turnTinyVal") },
-    "STALL_CHECK_TIME": { slider: document.getElementById("stallCheckTime"), val: document.getElementById("stallCheckTimeVal") },
-    "SEQ_EXIT_STRAIGHT_MS": { slider: document.getElementById("seqExitStraight"), val: document.getElementById("seqExitStraightVal") },
-    "SEQ_EXIT_TURN_MS": { slider: document.getElementById("seqExitTurn"), val: document.getElementById("seqExitTurnVal") },
-    "SEQ_EXIT_STOP_MS": { slider: document.getElementById("seqExitStop"), val: document.getElementById("seqExitStopVal") },
-    "SEQ_FRONT_BACK_MS": { slider: document.getElementById("seqFrontBack"), val: document.getElementById("seqFrontBackVal") },
-    "SEQ_FRONT_PRE_STOP_MS": { slider: document.getElementById("seqFrontPreStop"), val: document.getElementById("seqFrontPreStopVal") },
-    "SEQ_FRONT_TURN_MS": { slider: document.getElementById("seqFrontTurn"), val: document.getElementById("seqFrontTurnVal") },
-    "SEQ_FRONT_POST_STOP_MS": { slider: document.getElementById("seqFrontPostStop"), val: document.getElementById("seqFrontPostStopVal") },
-    "SEQ_STUCK_BACK_MS": { slider: document.getElementById("seqStuckBack"), val: document.getElementById("seqStuckBackVal") },
-    "SEQ_STUCK_TURN_MS": { slider: document.getElementById("seqStuckTurn"), val: document.getElementById("seqStuckTurnVal") }
-  };
-
-  // Manual planner sliders (VIVE 点对点)
-  const mpSliders = {
-    "MP_DIST_TOL": { id: "mpDistTol", label: "mpDistTolVal", min: 20, max: 150, step: 5, def: 50 },
-    "MP_ANGLE_TOL": { id: "mpAngleTol", label: "mpAngleTolVal", min: 5, max: 45, step: 1, def: 15 },
-    "MP_SPEED_FAR": { id: "mpSpeedFar", label: "mpSpeedFarVal", min: 20, max: 100, step: 5, def: 70 },
-    "MP_SPEED_NEAR": { id: "mpSpeedNear", label: "mpSpeedNearVal", min: 10, max: 80, step: 5, def: 40 },
-    "MP_TURN_RATE": { id: "mpTurnRate", label: "mpTurnRateVal", min: 30, max: 150, step: 5, def: 80 },
-    "MP_BUMP_FWD_MS": { id: "mpBumpFwd", label: "mpBumpFwdVal", min: 100, max: 1500, step: 50, def: 500 },
-    "MP_BUMP_STOP_MS": { id: "mpBumpStop", label: "mpBumpStopVal", min: 50, max: 1000, step: 50, def: 300 }
-  };
-
-  // 初始化所有参数滑块
-  for (const [paramName, obj] of Object.entries(paramSliders)) {
-    if (obj.slider && obj.val) {
-      updateSliderBackground(obj.slider);
-      obj.slider.oninput = function() {
-        const value = parseFloat(this.value);
-        obj.val.innerText = value;
-        updateSliderBackground(this);
-        // 实时发送参数更新
-        sendCommand("PARAM:" + paramName + "=" + value);
-      };
-    }
-  }
-
-  // 在页面末尾追加 MP 参数面板
-  (function mountMpPanel() {
-    const modeGroup = document.querySelector(".mode-btn-group");
-    const card = document.querySelector(".control-card");
-    if (card) {
-      const wrapper = document.createElement("div");
-      wrapper.style.marginTop = "10px";
-      wrapper.style.paddingTop = "10px";
-      wrapper.style.borderTop = "1px solid #f0f0f0";
-      const titleRow = document.createElement("div");
-      titleRow.style.display = "flex";
-      titleRow.style.justifyContent = "space-between";
-      titleRow.style.alignItems = "center";
-      titleRow.style.marginBottom = "10px";
-      const h3 = document.createElement("h3");
-      h3.style = "font-size:0.9em;color:#888;margin:0;font-weight:500;";
-      h3.innerText = "手动规划参数";
-      titleRow.appendChild(h3);
-      titleRow.appendChild(mpParamToggle);
-      wrapper.appendChild(titleRow);
-      wrapper.appendChild(mpParamPanel);
-      card.appendChild(wrapper);
-    }
-  })();
-
-  mpParamToggle.onclick = () => {
-    if (mpParamPanel.style.display === "none") {
-      mpParamPanel.style.display = "block";
-      mpParamToggle.innerText = "收起";
-    } else {
-      mpParamPanel.style.display = "none";
-      mpParamToggle.innerText = "展开";
-    }
-  };
-
-  // 渲染 MP 参数滑块
-  (function renderMpSliders() {
-    const container = document.getElementById("mpParamSliders");
-    if (!container) return;
-    for (const [k, cfg] of Object.entries(mpSliders)) {
-      const div = document.createElement("div");
-      div.className = "slider-group";
-      div.style.marginBottom = "10px";
-      div.innerHTML = `
-        <label>${k}: <span id="${cfg.label}">${cfg.def}</span></label>
-        <input type="range" id="${cfg.id}" min="${cfg.min}" max="${cfg.max}" step="${cfg.step}" value="${cfg.def}">
-      `;
-      container.appendChild(div);
-      const slider = document.getElementById(cfg.id);
-      const valLab = document.getElementById(cfg.label);
-      if (slider && valLab) {
-        slider.oninput = function() {
-          valLab.innerText = this.value;
-          updateSliderBackground(this);
-          sendMpParam(k, this.value);
-        };
-        updateSliderBackground(slider);
+      // simple L path preview
+      if (T) {
+        ctx.strokeStyle = "rgba(59,130,246,0.9)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tx(S.x), ty(S.y));
+        ctx.lineTo(tx(T.x), ty(S.y));
+        ctx.lineTo(tx(T.x), ty(T.y));
+        ctx.stroke();
       }
     }
-  })();
-</script>
+    setInterval(drawPreview, 1500);
+
+    // --- Params UI (render + localStorage + throttle) ---
+    function fmt(v) {
+      const n = Number(v);
+      if (Number.isNaN(n)) return v;
+      if (String(v).includes(".")) return n.toFixed(2);
+      return String(n);
+    }
+    function throttle(fn, ms) {
+      let last = 0, t = null, pending = null;
+      return (...args) => {
+        const now = Date.now();
+        pending = args;
+        const run = () => { last = Date.now(); t = null; fn(...pending); pending = null; };
+        if (now - last >= ms) run();
+        else if (!t) t = setTimeout(run, ms - (now - last));
+      };
+    }
+    function makeParamCard(p) {
+      const id = "p_" + p.key;
+      const vid = "v_" + p.key;
+      return `
+        <div class="param">
+          <div class="k">${p.key}</div>
+          <div class="meta">${p.desc || ""}</div>
+          <div class="ctrl">
+            <label for="${id}">
+              <span>${p.unit || ""}</span>
+              <span class="kbd" id="${vid}">${fmt(p.def)}</span>
+            </label>
+            <input type="range" id="${id}" min="${p.min}" max="${p.max}" step="${p.step}" value="${p.def}">
+          </div>
+        </div>
+      `;
+    }
+
+    // ===== 参数分类（按调参.md 组织）=====
+
+    // 简洁巡墙模式（双轮原地转）
+    // P控制巡墙参数
+    const WALL_PARAMS = [
+      { key:"WF_SPEED_FWD", min:0, max:100, step:1, def:50, desc:"巡墙速度" },
+      { key:"WALL_DIST_KP", min:0.00, max:1.00, step:0.01, def:0.10, desc:"距离Kp" },
+      { key:"WALL_ANGLE_KP", min:0.0, max:10.0, step:0.1, def:1.5, desc:"角度Kp" },
+      { key:"WALL_TARGET_DIST", min:50, max:800, step:5, def:200, unit:"mm", desc:"目标离墙距离" },
+      { key:"WF_MAX_TURN_RIGHT", min:0, max:100, step:1, def:70, desc:"最大右转力度" },
+      { key:"WF_MAX_TURN_LEFT", min:0, max:100, step:1, def:70, desc:"最大左转力度" },
+      { key:"WF_TURN_DEADBAND", min:0, max:50, step:1, def:14, desc:"直行死区" },
+      { key:"FRONT_OBS_DIST", min:50, max:1000, step:10, def:300, unit:"mm", desc:"前方障碍阈值" },
+      { key:"WALL_LOST_DIST", min:100, max:1500, step:10, def:650, unit:"mm", desc:"丢墙判定距离" },
+      { key:"FRONT_PANIC_DIST", min:20, max:300, step:5, def:60, unit:"mm", desc:"紧急倒车距离" },
+      { key:"TOF_SPACING_MM", min:50, max:300, step:1, def:143, unit:"mm", desc:"ToF间距" },
+    ];
+
+    // 胡同逃脱参数（倒车改变姿态 + 小半径转向）
+    const ALLEY_PARAMS = [
+      { key:"ALLEY_FRONT_CLOSE", min:50, max:1000, step:10, def:250, unit:"mm", desc:"前方近距触发（进胡同判定）" },
+      { key:"ALLEY_RIGHT_CLOSE", min:50, max:1000, step:10, def:350, unit:"mm", desc:"右边近距触发（进胡同判定）" },
+      { key:"ALLEY_BACKUP_SPEED", min:0, max:100, step:1, def:40, desc:"倒车速度" },
+      { key:"ALLEY_BACKUP_TURN", min:0, max:100, step:1, def:30, desc:"倒车转向力度（车尾向右甩）" },
+      { key:"ALLEY_BACKUP_MS", min:50, max:3000, step:50, def:600, unit:"ms", desc:"每次倒车时间" },
+      { key:"ALLEY_CHECK_MS", min:0, max:1000, step:25, def:100, unit:"ms", desc:"倒车后检测时间" },
+      { key:"ALLEY_FRONT_CLEAR", min:100, max:1500, step:10, def:400, unit:"mm", desc:"前方空了的阈值（出胡同判定）" },
+      { key:"ALLEY_EXIT_TURN_STRENGTH", min:0, max:100, step:1, def:50, desc:"出胡同小半径右转力度" },
+      { key:"ALLEY_EXIT_TURN_MS", min:50, max:2000, step:50, def:400, unit:"ms", desc:"小半径转向时间" },
+      { key:"ALLEY_EXIT_FWD_SPEED", min:0, max:100, step:1, def:40, desc:"转完后直行速度" },
+      { key:"ALLEY_EXIT_FWD_MS", min:50, max:2000, step:50, def:300, unit:"ms", desc:"转完后直行稳定时间" },
+    ];
+
+    // 📡 ToF 传感器标定
+    const TOF_PARAMS = [
+      { key:"TOF_OFFSET_F", min:-200, max:200, step:1, def:0, unit:"mm", desc:"前ToF偏移（测距偏大→设负值）" },
+      { key:"TOF_OFFSET_R1", min:-200, max:200, step:1, def:0, unit:"mm", desc:"右前ToF偏移" },
+      { key:"TOF_OFFSET_R2", min:-200, max:300, step:1, def:15, unit:"mm", desc:"右后ToF偏移" },
+      { key:"TOF_SCALE_F", min:0.80, max:1.30, step:0.01, def:1.03, desc:"前ToF比例系数" },
+      { key:"TOF_SCALE_R1", min:0.80, max:1.30, step:0.01, def:1.00, desc:"右前ToF比例系数" },
+      { key:"TOF_SCALE_R2", min:0.80, max:1.30, step:0.01, def:1.00, desc:"右后ToF比例系数" },
+      { key:"TOF_ALPHA", min:0.00, max:1.00, step:0.01, def:0.30, desc:"滤波系数（读数抖→调小0.2，响应慢→调大0.7）" },
+      { key:"TOF_JUMP_MM", min:0, max:800, step:10, def:200, unit:"mm", desc:"跳变限幅（跳动大→调小100）" },
+      { key:"TOF_MIN_MM", min:0, max:50, step:1, def:2, unit:"mm", desc:"最小有效距离" },
+      { key:"TOF_MAX_MM", min:500, max:8000, step:100, def:5000, unit:"mm", desc:"最大有效距离" },
+    ];
+
+    // 手动规划（中频模式为主）
+    const MP_PARAMS = [
+      { key:"MP_DIST_TOL", min:20, max:150, step:5, def:50, desc:"到点距离阈值(mm)" },
+      { key:"MP_ANGLE_TOL", min:5, max:30, step:1, def:12, desc:"朝向角容差(deg)" },
+      { key:"MP_SPEED_FAR", min:20, max:100, step:5, def:60, desc:"远距离速度" },
+      { key:"MP_SPEED_NEAR", min:10, max:80, step:5, def:35, desc:"近距离减速" },
+      { key:"MP_TURN_RATE", min:30, max:150, step:5, def:65, desc:"原地转向力度" },
+      { key:"MP_BUMP_FWD_MS", min:100, max:1500, step:50, def:500, unit:"ms", desc:"撞击前冲时间" },
+      { key:"MP_BUMP_STOP_MS", min:50, max:1000, step:50, def:300, unit:"ms", desc:"撞后停顿时间" },
+      { key:"MP_DEBUG", min:0, max:1, step:1, def:0, desc:"调试输出" },
+      { key:"MP_MF_ENABLED", min:0, max:1, step:1, def:1, desc:"中频模式开关(默认开)" },
+      { key:"MP_MF_EXEC_MS", min:200, max:800, step:25, def:400, unit:"ms", desc:"中频执行周期" },
+      { key:"MP_MF_STOP_MIN_MS", min:50, max:300, step:25, def:100, unit:"ms", desc:"中频停车时间" },
+      { key:"MP_MF_FIX_N", min:2, max:8, step:1, def:4, desc:"中频采样数" },
+      { key:"MP_MF_POS_STD_MAX", min:20, max:100, step:5, def:40, unit:"mm", desc:"中频位置稳定阈值" },
+      { key:"MP_MF_ANG_STD_MAX", min:5, max:30, step:1, def:15, unit:"deg", desc:"中频角度稳定阈值" },
+      { key:"MP_LF_ENABLED", min:0, max:1, step:1, def:0, desc:"低频模式开关(默认关)" },
+      { key:"MP_LF_EXEC_MS", min:100, max:2500, step:50, def:900, unit:"ms", desc:"低频执行周期" },
+      { key:"MP_LF_STOP_MIN_MS", min:0, max:2500, step:50, def:250, unit:"ms", desc:"低频停车时间" },
+      { key:"MP_LF_FIX_N", min:1, max:20, step:1, def:8, desc:"低频采样数" },
+      { key:"MP_LF_POS_STD_MAX", min:0, max:200, step:1, def:30, unit:"mm", desc:"低频位置稳定阈值" },
+      { key:"MP_LF_ANG_STD_MAX", min:0, max:90, step:1, def:12, unit:"deg", desc:"低频角度稳定阈值" },
+    ];
+
+    function renderSection(containerId, params, sender) {
+      const el = document.getElementById(containerId);
+      el.innerHTML = params.map(makeParamCard).join("");
+      const throttled = throttle((k, v) => sender(k, v), 120);
+      for (const p of params) {
+        const slider = document.getElementById("p_" + p.key);
+        const lab = document.getElementById("v_" + p.key);
+        const storeKey = "gagac_" + p.key;
+        const saved = localStorage.getItem(storeKey);
+        if (saved !== null) {
+          slider.value = saved;
+          lab.innerText = fmt(saved);
+        } else {
+          lab.innerText = fmt(slider.value);
+        }
+        slider.addEventListener("input", () => {
+          const v = slider.value;
+          lab.innerText = fmt(v);
+          localStorage.setItem(storeKey, v);
+          throttled(p.key, v);
+        });
+      }
+    }
+
+    // 渲染各个参数面板
+    renderSection("secWall", WALL_PARAMS, sendParam);
+    renderSection("secAlley", ALLEY_PARAMS, sendParam);
+    renderSection("secToF", TOF_PARAMS, sendParam);
+    renderSection("secMp", MP_PARAMS, sendMpParam);
+
+    // 所有参数数组（用于发送全部/重置）
+    const ALL_PARAMS = [...WALL_PARAMS, ...ALLEY_PARAMS, ...TOF_PARAMS];
+
+    function sendAll() {
+      for (const p of ALL_PARAMS) sendParam(p.key, document.getElementById("p_" + p.key).value);
+      for (const p of MP_PARAMS) sendMpParam(p.key, document.getElementById("p_" + p.key).value);
+    }
+    document.getElementById("btnSendAll").onclick = () => sendAll();
+    document.getElementById("btnResetDefaults").onclick = () => {
+      if (!confirm("确定要恢复默认值？（会清空浏览器保存的参数）")) return;
+      const all = [...ALL_PARAMS, ...MP_PARAMS];
+      for (const p of all) localStorage.removeItem("gagac_" + p.key);
+      location.reload();
+    };
+
+    // init labels
+    speedVal.innerText = speedSlider.value;
+    turnVal.innerText = turnSlider.value;
+
+    // ========== 曼哈顿路径规划 Canvas ==========
+    const planCanvas = document.getElementById("planCanvas");
+    const planTargetDisplay = document.getElementById("planTargetDisplay");
+    const planStatusDisplay = document.getElementById("planStatusDisplay");
+    const curPosDisplay = document.getElementById("curPosDisplay");
+    const distDisplay = document.getElementById("distDisplay");
+    const coordDisplay = document.getElementById("coordDisplay");
+    const btnPlanExec = document.getElementById("btnPlanExec");
+    const btnPlanExecLF = document.getElementById("btnPlanExecLF");
+    const btnPlanClear = document.getElementById("btnPlanClear");
+    const btnPlanStopNav = document.getElementById("btnPlanStopNav");
+    const mfExecSlider = document.getElementById("mfExecSlider");
+    const mfExecVal = document.getElementById("mfExecVal");
+
+    // 场地边界（安全区域外边界）
+    const fieldBound = { xmin: 3920, xmax: 5100, ymin: 1390, ymax: 5700 };
+    // 障碍框（中间禁止区域）：X 4072~4950, Y 3120~4257
+    const obstacleBox = { left: 4072, right: 4950, top: 4257, bottom: 3120 };
+    // 当前选中的目标点
+    let selectedTarget = null;
+
+    // Canvas 坐标转换
+    function canvasToField(cx, cy) {
+      const w = planCanvas.width, h = planCanvas.height;
+      const fx = fieldBound.xmin + (cx / w) * (fieldBound.xmax - fieldBound.xmin);
+      const fy = fieldBound.ymax - (cy / h) * (fieldBound.ymax - fieldBound.ymin);
+      return { x: fx, y: fy };
+    }
+    function fieldToCanvas(fx, fy) {
+      const w = planCanvas.width, h = planCanvas.height;
+      const cx = (fx - fieldBound.xmin) / (fieldBound.xmax - fieldBound.xmin) * w;
+      const cy = h - (fy - fieldBound.ymin) / (fieldBound.ymax - fieldBound.ymin) * h;
+      return { x: cx, y: cy };
+    }
+
+    // 检查点是否在障碍内
+    function isInObstacle(fx, fy) {
+      return fx >= obstacleBox.left && fx <= obstacleBox.right &&
+             fy >= obstacleBox.bottom && fy <= obstacleBox.top;
+    }
+
+    // 检查点是否在安全区域内
+    function isInSafeZone(fx, fy) {
+      const inBound = fx >= fieldBound.xmin && fx <= fieldBound.xmax &&
+                      fy >= fieldBound.ymin && fy <= fieldBound.ymax;
+      return inBound && !isInObstacle(fx, fy);
+    }
+
+    // 计算曼哈顿路径（简单版：先X后Y，检测是否穿过障碍）
+    function computeManhattanPath(sx, sy, tx, ty) {
+      // 方案1: 先X后Y
+      const mid1 = { x: tx, y: sy };
+      const path1CrossObs = doesSegmentCrossObstacle(sx, sy, mid1.x, mid1.y) ||
+                            doesSegmentCrossObstacle(mid1.x, mid1.y, tx, ty);
+      if (!path1CrossObs) return [{ x: sx, y: sy }, mid1, { x: tx, y: ty }];
+
+      // 方案2: 先Y后X
+      const mid2 = { x: sx, y: ty };
+      const path2CrossObs = doesSegmentCrossObstacle(sx, sy, mid2.x, mid2.y) ||
+                            doesSegmentCrossObstacle(mid2.x, mid2.y, tx, ty);
+      if (!path2CrossObs) return [{ x: sx, y: sy }, mid2, { x: tx, y: ty }];
+
+      // 绕行（上/下/左/右）
+      const detours = [
+        { via: { x: sx, y: obstacleBox.top + 50 }, mid: { x: tx, y: obstacleBox.top + 50 } },   // 上绕
+        { via: { x: sx, y: obstacleBox.bottom - 50 }, mid: { x: tx, y: obstacleBox.bottom - 50 } }, // 下绕
+        { via: { x: obstacleBox.left - 50, y: sy }, mid: { x: obstacleBox.left - 50, y: ty } },  // 左绕
+        { via: { x: obstacleBox.right + 50, y: sy }, mid: { x: obstacleBox.right + 50, y: ty } }, // 右绕
+      ];
+      for (const d of detours) {
+        if (isInSafeZone(d.via.x, d.via.y) && isInSafeZone(d.mid.x, d.mid.y)) {
+          return [{ x: sx, y: sy }, d.via, d.mid, { x: tx, y: ty }];
+        }
+      }
+      // 无解，返回直线（实际会被障碍挡住）
+      return [{ x: sx, y: sy }, { x: tx, y: ty }];
+    }
+
+    // 线段是否穿过障碍
+    function doesSegmentCrossObstacle(x1, y1, x2, y2) {
+      // 简化：检查线段是否与障碍矩形相交
+      const horizontal = Math.abs(y1 - y2) < 1;
+      const vertical = Math.abs(x1 - x2) < 1;
+      if (horizontal) {
+        const y = y1;
+        if (y >= obstacleBox.bottom && y <= obstacleBox.top) {
+          const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+          if (maxX >= obstacleBox.left && minX <= obstacleBox.right) return true;
+        }
+      } else if (vertical) {
+        const x = x1;
+        if (x >= obstacleBox.left && x <= obstacleBox.right) {
+          const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+          if (maxY >= obstacleBox.bottom && minY <= obstacleBox.top) return true;
+        }
+      }
+      return false;
+    }
+
+    // 绘制规划 Canvas
+    function drawPlanCanvas() {
+      const ctx = planCanvas.getContext("2d");
+      const w = planCanvas.width, h = planCanvas.height;
+
+      // 深色背景
+      ctx.fillStyle = "#1a1a2e";
+      ctx.fillRect(0, 0, w, h);
+
+      // 绘制安全区域（外边界 - 内障碍 = 回字形）
+      // 先填充整个外边界为绿色
+      ctx.fillStyle = "rgba(74, 222, 128, 0.25)";
+      ctx.fillRect(0, 0, w, h);
+
+      // 再用障碍区域覆盖（红色）
+      const obsP1 = fieldToCanvas(obstacleBox.left, obstacleBox.top);
+      const obsP2 = fieldToCanvas(obstacleBox.right, obstacleBox.bottom);
+      ctx.fillStyle = "rgba(239, 68, 68, 0.4)";
+      ctx.fillRect(obsP1.x, obsP1.y, obsP2.x - obsP1.x, obsP2.y - obsP1.y);
+
+      // 障碍边框
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(obsP1.x, obsP1.y, obsP2.x - obsP1.x, obsP2.y - obsP1.y);
+
+      // 外边界框
+      ctx.strokeStyle = "#4ade80";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(2, 2, w - 4, h - 4);
+
+      // 网格线
+      ctx.strokeStyle = "rgba(255,255,255,0.1)";
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 10; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * w / 10, 0);
+        ctx.lineTo(i * w / 10, h);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i * h / 10);
+        ctx.lineTo(w, i * h / 10);
+        ctx.stroke();
+      }
+
+      // 坐标刻度标注
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      ctx.font = "9px monospace";
+      // X轴
+      for (let x = fieldBound.xmin; x <= fieldBound.xmax; x += 200) {
+        const cp = fieldToCanvas(x, fieldBound.ymin);
+        ctx.fillText(x.toString(), cp.x - 12, h - 4);
+      }
+      // Y轴
+      for (let y = fieldBound.ymin; y <= fieldBound.ymax; y += 500) {
+        const cp = fieldToCanvas(fieldBound.xmin, y);
+        ctx.fillText(y.toString(), 4, cp.y + 3);
+      }
+
+      // 规划路径
+      if (selectedTarget && vivePose.x > 0 && vivePose.y > 0) {
+        const path = computeManhattanPath(vivePose.x, vivePose.y, selectedTarget.x, selectedTarget.y);
+        if (path.length >= 2) {
+          ctx.strokeStyle = "#fbbf24";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          const p0 = fieldToCanvas(path[0].x, path[0].y);
+          ctx.moveTo(p0.x, p0.y);
+          for (let i = 1; i < path.length; i++) {
+            const pi = fieldToCanvas(path[i].x, path[i].y);
+            ctx.lineTo(pi.x, pi.y);
+          }
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // 路径拐点标记
+          ctx.fillStyle = "#fbbf24";
+          for (let i = 1; i < path.length - 1; i++) {
+            const pi = fieldToCanvas(path[i].x, path[i].y);
+            ctx.beginPath();
+            ctx.arc(pi.x, pi.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // 当前 VIVE 位置
+      if (vivePose.x > 0 && vivePose.y > 0) {
+        const cp = fieldToCanvas(vivePose.x, vivePose.y);
+        // 光晕效果
+        const gradient = ctx.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, 20);
+        gradient.addColorStop(0, "rgba(255,107,53,0.4)");
+        gradient.addColorStop(1, "rgba(255,107,53,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, 20, 0, Math.PI * 2);
+        ctx.fill();
+        // 主圆点
+        ctx.fillStyle = "#ff6b35";
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // 朝向箭头
+        const angRad = (90 - vivePose.angle) * Math.PI / 180;
+        const arrowLen = 22;
+        ctx.strokeStyle = "#ff6b35";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cp.x, cp.y);
+        ctx.lineTo(cp.x + arrowLen * Math.cos(angRad), cp.y - arrowLen * Math.sin(angRad));
+        ctx.stroke();
+        // 箭头头部
+        const headLen = 8;
+        const headAng = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(cp.x + arrowLen * Math.cos(angRad), cp.y - arrowLen * Math.sin(angRad));
+        ctx.lineTo(cp.x + (arrowLen - headLen) * Math.cos(angRad - headAng), cp.y - (arrowLen - headLen) * Math.sin(angRad - headAng));
+        ctx.moveTo(cp.x + arrowLen * Math.cos(angRad), cp.y - arrowLen * Math.sin(angRad));
+        ctx.lineTo(cp.x + (arrowLen - headLen) * Math.cos(angRad + headAng), cp.y - (arrowLen - headLen) * Math.sin(angRad + headAng));
+        ctx.stroke();
+
+        // 更新当前位置显示
+        curPosDisplay.innerText = `(${vivePose.x.toFixed(0)}, ${vivePose.y.toFixed(0)}) ${vivePose.angle.toFixed(1)}°`;
+      } else {
+        curPosDisplay.innerText = "等待VIVE...";
+      }
+
+      // 目标点
+      if (selectedTarget) {
+        const tp = fieldToCanvas(selectedTarget.x, selectedTarget.y);
+        // 光晕效果
+        const gradient = ctx.createRadialGradient(tp.x, tp.y, 0, tp.x, tp.y, 18);
+        gradient.addColorStop(0, "rgba(96,165,250,0.4)");
+        gradient.addColorStop(1, "rgba(96,165,250,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 18, 0, Math.PI * 2);
+        ctx.fill();
+        // 十字准星
+        ctx.strokeStyle = "#60a5fa";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(tp.x - 12, tp.y);
+        ctx.lineTo(tp.x + 12, tp.y);
+        ctx.moveTo(tp.x, tp.y - 12);
+        ctx.lineTo(tp.x, tp.y + 12);
+        ctx.stroke();
+        // 主圆点
+        ctx.fillStyle = "#60a5fa";
+        ctx.beginPath();
+        ctx.arc(tp.x, tp.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 计算距离
+        if (vivePose.x > 0 && vivePose.y > 0) {
+          const dx = selectedTarget.x - vivePose.x;
+          const dy = selectedTarget.y - vivePose.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          distDisplay.innerText = `${dist.toFixed(0)} mm`;
+        }
+      } else {
+        distDisplay.innerText = "-";
+      }
+    }
+
+    // 鼠标移动显示坐标
+    planCanvas.addEventListener("mousemove", (e) => {
+      const rect = planCanvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const fp = canvasToField(cx, cy);
+      const inSafe = isInSafeZone(fp.x, fp.y);
+      coordDisplay.innerText = `X:${fp.x.toFixed(0)} Y:${fp.y.toFixed(0)} ${inSafe ? "[OK]" : "[!]"}`;
+      coordDisplay.style.color = inSafe ? "#4ade80" : "#ef4444";
+    });
+
+    // Canvas 点击选点
+    planCanvas.addEventListener("click", (e) => {
+      const rect = planCanvas.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const fp = canvasToField(cx, cy);
+      const fx = Math.round(fp.x), fy = Math.round(fp.y);
+
+      // 检查是否在安全区域内
+      if (!isInSafeZone(fx, fy)) {
+        planStatusDisplay.innerText = "目标点在障碍区域内！";
+        planStatusDisplay.style.color = "#ef4444";
+        addNavLog(`点击位置 (${fx}, ${fy}) 在障碍区域内`, "#ef4444");
+        return;
+      }
+
+      selectedTarget = { x: fx, y: fy };
+      planTargetDisplay.innerText = `(${fx}, ${fy})`;
+      planStatusDisplay.innerText = "✓ 已选择目标，点击执行";
+      planStatusDisplay.style.color = "#22c55e";
+      // 计算距离
+      let distInfo = "";
+      if (vivePose.x > 0 && vivePose.y > 0) {
+        const dx = fx - vivePose.x;
+        const dy = fy - vivePose.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        distInfo = `, 距离 ${dist.toFixed(0)}mm`;
+      }
+      addNavLog(`选择目标: (${fx}, ${fy})${distInfo}`, "#60a5fa");
+      drawPlanCanvas();
+    });
+
+    // 中频执行滑块
+    mfExecSlider.oninput = function() {
+      mfExecVal.innerText = this.value;
+    };
+
+    // 规划并执行（中频）
+    btnPlanExec.onclick = () => {
+      if (!selectedTarget) {
+        planStatusDisplay.innerText = "请先点击选择目标点";
+        planStatusDisplay.style.color = "#f59e0b";
+        addNavLog("未选择目标点", "#f59e0b");
+        return;
+      }
+      const mfMs = mfExecSlider.value;
+      sendCommand(`MP_PARAM:MP_MF_EXEC_MS=${mfMs}`);
+      sendCommand(`PLAN_MF:${selectedTarget.x},${selectedTarget.y}`);
+      planStatusDisplay.innerText = `▶ 中频导航中... (${mfMs}ms)`;
+      planStatusDisplay.style.color = "#22c55e";
+      addNavLog(`发送中频规划命令 (周期=${mfMs}ms)`, "#22c55e");
+    };
+
+    // 执行（低频）
+    btnPlanExecLF.onclick = () => {
+      if (!selectedTarget) {
+        planStatusDisplay.innerText = "请先点击选择目标点";
+        planStatusDisplay.style.color = "#f59e0b";
+        addNavLog("未选择目标点", "#f59e0b");
+        return;
+      }
+      sendCommand(`PLAN1:${selectedTarget.x},${selectedTarget.y}`);
+      planStatusDisplay.innerText = "▶ 低频导航中...";
+      planStatusDisplay.style.color = "#3b82f6";
+      addNavLog("发送低频规划命令", "#3b82f6");
+    };
+
+    // 清除目标
+    btnPlanClear.onclick = () => {
+      selectedTarget = null;
+      planTargetDisplay.innerText = "未设置";
+      planStatusDisplay.innerText = "就绪";
+      planStatusDisplay.style.color = "";
+      drawPlanCanvas();
+      addNavLog("已清除目标点", "#6b7280");
+    };
+
+    // 停止导航
+    btnPlanStopNav.onclick = () => {
+      sendCommand("PLAN_STOP");
+      planStatusDisplay.innerText = "■ 已停止";
+      planStatusDisplay.style.color = "#ef4444";
+      addNavLog("导航已停止", "#ef4444");
+    };
+
+    // ========== 导航日志 ==========
+    const navLogArea = document.getElementById("navLogArea");
+    const btnClearNavLog = document.getElementById("btnClearNavLog");
+    let navLogCount = 0;
+    let lastNavState = null;
+    let lastLoggedPos = { x: 0, y: 0 };
+    let isNavigating = false;
+    let navStartTime = 0;
+    let stepCount = 0;
+
+    function addNavLog(msg, color = "#0f0") {
+      const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      const div = document.createElement("div");
+      div.style.color = color;
+      div.innerHTML = `<span style="color:#666;">[${time}]</span> ${msg}`;
+      navLogArea.appendChild(div);
+      navLogArea.scrollTop = navLogArea.scrollHeight;
+      navLogCount++;
+      // 限制日志数量
+      if (navLogCount > 100) {
+        navLogArea.removeChild(navLogArea.firstChild);
+        navLogCount--;
+      }
+    }
+
+    btnClearNavLog.onclick = () => {
+      navLogArea.innerHTML = '<div style="color:#666;">[日志已清空]</div>';
+      navLogCount = 1;
+      stepCount = 0;
+    };
+
+    // 导航状态跟踪
+    function trackNavigation() {
+      if (!vivePose.x || !vivePose.y) return;
+
+      // 检测导航开始
+      const statusText = planStatusDisplay.innerText;
+      const nowNavigating = statusText.includes("导航中");
+
+      if (nowNavigating && !isNavigating) {
+        // 导航刚开始
+        isNavigating = true;
+        navStartTime = Date.now();
+        stepCount = 0;
+        const mode = statusText.includes("中频") ? "中频" : "低频";
+        addNavLog(`开始${mode}导航`, "#22c55e");
+        if (selectedTarget) {
+          addNavLog(`起点: (${vivePose.x.toFixed(0)}, ${vivePose.y.toFixed(0)})`, "#ff6b35");
+          addNavLog(`目标: (${selectedTarget.x}, ${selectedTarget.y})`, "#60a5fa");
+          const dx = selectedTarget.x - vivePose.x;
+          const dy = selectedTarget.y - vivePose.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          addNavLog(`初始距离: ${dist.toFixed(0)} mm`, "#fbbf24");
+        }
+        lastLoggedPos = { x: vivePose.x, y: vivePose.y };
+      }
+
+      if (!nowNavigating && isNavigating) {
+        // 导航结束
+        isNavigating = false;
+        const elapsed = ((Date.now() - navStartTime) / 1000).toFixed(1);
+        if (statusText.includes("停止")) {
+          addNavLog(`导航停止 (用时 ${elapsed}s, ${stepCount} 步)`, "#ef4444");
+        } else {
+          addNavLog(`导航完成 (用时 ${elapsed}s, ${stepCount} 步)`, "#22c55e");
+        }
+        if (selectedTarget) {
+          const dx = selectedTarget.x - vivePose.x;
+          const dy = selectedTarget.y - vivePose.y;
+          const finalDist = Math.sqrt(dx * dx + dy * dy);
+          addNavLog(`终点: (${vivePose.x.toFixed(0)}, ${vivePose.y.toFixed(0)})`, "#ff6b35");
+          addNavLog(`终点误差: ${finalDist.toFixed(0)} mm`, finalDist < 100 ? "#22c55e" : "#f59e0b");
+        }
+      }
+
+      // 导航中记录位置变化
+      if (isNavigating) {
+        const dx = vivePose.x - lastLoggedPos.x;
+        const dy = vivePose.y - lastLoggedPos.y;
+        const moved = Math.sqrt(dx * dx + dy * dy);
+        // 移动超过 50mm 记录一次
+        if (moved > 50) {
+          stepCount++;
+          let distToTarget = "-";
+          if (selectedTarget) {
+            const tdx = selectedTarget.x - vivePose.x;
+            const tdy = selectedTarget.y - vivePose.y;
+            distToTarget = Math.sqrt(tdx * tdx + tdy * tdy).toFixed(0);
+          }
+          addNavLog(`#${stepCount} (${vivePose.x.toFixed(0)}, ${vivePose.y.toFixed(0)}) θ=${vivePose.angle.toFixed(1)}° → 目标 ${distToTarget}mm`, "#aaa");
+          lastLoggedPos = { x: vivePose.x, y: vivePose.y };
+        }
+      }
+    }
+
+    // 周期刷新 Canvas 和导航跟踪
+    setInterval(() => {
+      drawPlanCanvas();
+      trackNavigation();
+    }, 300);
+  </script>
 </body>
 </html>
 )rawliteral";
+
+

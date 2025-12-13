@@ -32,9 +32,11 @@
 #include "manual_planner.h"
 
 // 绕障配置
-float MP_PATH_MARGIN = 150.0f; // 安全边距 (mm)
+// 注意：边界已考虑小车尺寸，margin 设为 0
+float MP_PATH_MARGIN = 0.0f; // 安全边距 (mm)，边界已预留
 static bool mp_obstacleEnabled = true;
-static ObstacleBox mp_obstacleBox = {3920.0f, 5100.0f, 5700.0f, 1390.0f};
+// 障碍框：X 4072~4950, Y 3120~4257（left, right, top, bottom）
+static ObstacleBox mp_obstacleBox = {4072.0f, 4950.0f, 4257.0f, 3120.0f};
 
 // 外部边界（默认以场地边界生效，可通过接口调整）
 bool mp_boundEnabled = true;
@@ -63,13 +65,15 @@ static Waypoint routeBuf[MP_MAX_ROUTE];
 uint8_t mp_routeCount = 0;
 
 // 参数（可按车速/场景调整，可被运行时更新）
-float MP_DIST_TOL     = 50.0f;   // 到点距离阈值 (mm)
-float MP_ANGLE_TOL    = 15.0f;   // 朝向角容差 (deg)
-float MP_SPEED_FAR    = 70.0f;   // 远距离速度
-float MP_SPEED_NEAR   = 40.0f;   // 近距离减速
-float MP_TURN_RATE    = 80.0f;   // 原地转向力度
+// 置信区间：允许小误差范围内视为"到达"
+float MP_DIST_TOL     = 50.0f;   // 到点距离阈值 (mm)，50mm 内视为到达
+float MP_ANGLE_TOL    = 12.0f;   // 朝向角容差 (deg)，±12° 内视为对准
+float MP_SPEED_FAR    = 60.0f;   // 远距离速度
+float MP_SPEED_NEAR   = 35.0f;   // 近距离减速
+float MP_TURN_RATE    = 65.0f;   // 原地转向力度
 uint16_t MP_BUMP_FWD_MS  = 500;  // 撞击前冲时间
 uint16_t MP_BUMP_STOP_MS = 300;  // 撞后停顿时间
+static bool MP_DEBUG = false;    // 串口调试输出（通过 MP_PARAM:MP_DEBUG=1 开启）
 
 // 状态
 static uint8_t mp_idx = 0;
@@ -78,15 +82,24 @@ static bool mp_inBump = false;
 static uint8_t mp_bumpDone = 0;
 static unsigned long mp_bumpT0 = 0;
 
-// =============== 低频“定位-再规划-执行”滚动控制（抗 Vive 偏差） ===============
+// =============== 低频"定位-再规划-执行"滚动控制（抗 Vive 偏差） ===============
 // 思路：执行一小段时间 -> 停车 -> 累积多次 Vive 采样并判定稳定 -> 以稳定位置重新规划 -> 再执行
-// 作为导航模式：默认启用低频滚动；旧的连续高频模式弃用
-static bool MP_LF_ENABLED = true;
-static uint16_t MP_LF_EXEC_MS = 900;     // 每段执行时长（ms）
+// 默认关闭低频，使用中频模式
+static bool MP_LF_ENABLED = false;
+static uint16_t MP_LF_EXEC_MS = 900;     // 每段执行时长（ms）- 低频模式
 static uint16_t MP_LF_STOP_MIN_MS = 250; // 每段定位最短停车时间（ms）
-static uint8_t  MP_LF_FIX_N = 8;         // 定位阶段需要的采样数（mp_step 每次调用算一次采样）
+static uint8_t  MP_LF_FIX_N = 8;         // 定位阶段需要的采样数
 static float    MP_LF_POS_STD_MAX = 30.0f;  // 稳定判定：位置标准差阈值（mm）
 static float    MP_LF_ANG_STD_MAX = 12.0f;  // 稳定判定：角度标准差阈值（deg）
+
+// =============== 中频导航模式（默认启用，更快响应） ===============
+// 相比低频：执行周期更短、停车时间更短、采样数更少
+static bool MP_MF_ENABLED = true;        // 中频模式开关（默认启用）
+static uint16_t MP_MF_EXEC_MS = 400;     // 中频每段执行时长（ms）
+static uint16_t MP_MF_STOP_MIN_MS = 100; // 中频停车定位时间（ms）
+static uint8_t  MP_MF_FIX_N = 4;         // 中频采样数
+static float    MP_MF_POS_STD_MAX = 40.0f;  // 中频位置稳定阈值
+static float    MP_MF_ANG_STD_MAX = 15.0f;  // 中频角度稳定阈值
 
 static bool mp_hasTargetsForReplan = false;
 static uint8_t mp_targetCount = 0;
@@ -165,6 +178,21 @@ static float mp_normDeg(float a) {
   while (a > 180.0f) a -= 360.0f;
   while (a < -180.0f) a += 360.0f;
   return a;
+}
+
+// 将角度误差映射成转向力度（0~MP_TURN_RATE），用于减少过冲/抖动
+static float mp_turnRateFromErr(float absErrDeg) {
+  // absErrDeg 已经是 |error|（度）
+  float maxRate = MP_TURN_RATE;
+  // 小误差时用一个较小的最小转向，避免“转不动”
+  float minRate = min(25.0f, maxRate);
+  // 误差达到该值时使用最大转向力度
+  const float FULL_ERR_DEG = 60.0f;
+  float denom = (FULL_ERR_DEG - MP_ANGLE_TOL);
+  if (denom < 1e-3f) return maxRate;
+  float t = (absErrDeg - MP_ANGLE_TOL) / denom;
+  t = constrain(t, 0.0f, 1.0f);
+  return minRate + (maxRate - minRate) * t;
 }
 
 // =============== 伪代码实现：轴对齐路径规划（独立模式） ===============
@@ -408,14 +436,25 @@ void mp_updateParam(const String& key, float val) {
   else if (k == "MP_TURN_RATE") MP_TURN_RATE = val;
   else if (k == "MP_BUMP_FWD_MS") MP_BUMP_FWD_MS = (uint16_t)val;
   else if (k == "MP_BUMP_STOP_MS") MP_BUMP_STOP_MS = (uint16_t)val;
+  else if (k == "MP_DEBUG") MP_DEBUG = (val >= 0.5f);
   // 低频滚动参数
   // 注意：为了避免误切回旧模式，这里不允许关闭低频；只接受开启（val>=0.5）
-  else if (k == "MP_LF_ENABLED") { if (val >= 0.5f) MP_LF_ENABLED = true; }
+  else if (k == "MP_LF_ENABLED") { MP_LF_ENABLED = (val >= 0.5f); }
   else if (k == "MP_LF_EXEC_MS") MP_LF_EXEC_MS = (uint16_t)max(0.0f, val);
   else if (k == "MP_LF_STOP_MIN_MS") MP_LF_STOP_MIN_MS = (uint16_t)max(0.0f, val);
   else if (k == "MP_LF_FIX_N") MP_LF_FIX_N = (uint8_t)constrain((int)val, 1, (int)MP_LF_MAX_SAMPLES);
   else if (k == "MP_LF_POS_STD_MAX") MP_LF_POS_STD_MAX = max(0.0f, val);
   else if (k == "MP_LF_ANG_STD_MAX") MP_LF_ANG_STD_MAX = max(0.0f, val);
+  // 中频滚动参数
+  else if (k == "MP_MF_ENABLED") {
+    MP_MF_ENABLED = (val >= 0.5f);
+    if (MP_MF_ENABLED) MP_LF_ENABLED = false; // 中频开启时自动关闭低频
+  }
+  else if (k == "MP_MF_EXEC_MS") MP_MF_EXEC_MS = (uint16_t)max(100.0f, val);
+  else if (k == "MP_MF_STOP_MIN_MS") MP_MF_STOP_MIN_MS = (uint16_t)max(0.0f, val);
+  else if (k == "MP_MF_FIX_N") MP_MF_FIX_N = (uint8_t)constrain((int)val, 1, (int)MP_LF_MAX_SAMPLES);
+  else if (k == "MP_MF_POS_STD_MAX") MP_MF_POS_STD_MAX = max(0.0f, val);
+  else if (k == "MP_MF_ANG_STD_MAX") MP_MF_ANG_STD_MAX = max(0.0f, val);
 }
 
 // 生成下一步指令；返回 "S/Lxx/Rxx/Fxx"。到达最后一个路点后返回 "S" 并停机。
@@ -424,16 +463,35 @@ String mp_step(float x, float y, float angleDeg) {
     return "S";
   }
 
-  // 低频滚动模式：停车->稳定定位->重规划->执行一段
-  if (MP_LF_ENABLED && mp_hasTargetsForReplan) {
+  // 低频/中频滚动模式：停车->稳定定位->重规划->执行一段
+  // 中频模式优先级高于低频
+  bool useFreqMode = (MP_MF_ENABLED || MP_LF_ENABLED) && mp_hasTargetsForReplan;
+  if (useFreqMode) {
     unsigned long now = millis();
+    // 根据模式选择参数
+    uint16_t execMs = MP_MF_ENABLED ? MP_MF_EXEC_MS : MP_LF_EXEC_MS;
+    uint16_t stopMinMs = MP_MF_ENABLED ? MP_MF_STOP_MIN_MS : MP_LF_STOP_MIN_MS;
+    uint8_t fixN = MP_MF_ENABLED ? MP_MF_FIX_N : MP_LF_FIX_N;
+    float posStdMax = MP_MF_ENABLED ? MP_MF_POS_STD_MAX : MP_LF_POS_STD_MAX;
+    float angStdMax = MP_MF_ENABLED ? MP_MF_ANG_STD_MAX : MP_LF_ANG_STD_MAX;
+
     switch (mp_lfState) {
       case LF_STOP_LOCATE: {
         // 停车并累积采样
         mp_lfAddSample(x, y, angleDeg);
         float sx, sy, sa, posStd, angStd;
+        // 临时覆盖采样数阈值
+        uint8_t oldFixN = MP_LF_FIX_N;
+        float oldPosMax = MP_LF_POS_STD_MAX;
+        float oldAngMax = MP_LF_ANG_STD_MAX;
+        MP_LF_FIX_N = fixN;
+        MP_LF_POS_STD_MAX = posStdMax;
+        MP_LF_ANG_STD_MAX = angStdMax;
         bool stable = mp_lfComputeStablePose(sx, sy, sa, posStd, angStd);
-        if ((now - mp_lfT0) >= MP_LF_STOP_MIN_MS && stable) {
+        MP_LF_FIX_N = oldFixN;
+        MP_LF_POS_STD_MAX = oldPosMax;
+        MP_LF_ANG_STD_MAX = oldAngMax;
+        if ((now - mp_lfT0) >= stopMinMs && stable) {
           // 进入重规划阶段
           mp_lfState = LF_REPLAN;
         }
@@ -457,7 +515,7 @@ String mp_step(float x, float y, float angleDeg) {
         return "S";
       }
       case LF_EXEC: {
-        if ((now - mp_lfExecT0) >= MP_LF_EXEC_MS) {
+        if ((now - mp_lfExecT0) >= execMs) {
           mp_lfState = LF_STOP_LOCATE;
           mp_lfT0 = now;
           mp_lfResetSamples();
@@ -512,16 +570,33 @@ String mp_step(float x, float y, float angleDeg) {
     float desired = mp_normDeg((180.0f / PI) * atan2f(dy, dx) + 90.0f);
     float err = mp_normDeg(desired - angleDeg);
     if (fabsf(err) > MP_ANGLE_TOL) {
-      return (err > 0) ? "R" + String((int)MP_TURN_RATE) : "L" + String((int)MP_TURN_RATE);
+      float rate = mp_turnRateFromErr(fabsf(err));
+      String cmd = (err > 0) ? "R" + String((int)rate) : "L" + String((int)rate);
+      if (MP_DEBUG) {
+        Serial.printf("[MP] idx=%u dist=%.1f desired=%.1f ang=%.1f err=%.1f rate=%.1f -> %s\n",
+                      (unsigned)mp_idx, dist, desired, angleDeg, err, rate, cmd.c_str());
+      }
+      return cmd;
     }
     float spd = (dist < 150.0f) ? MP_SPEED_NEAR : MP_SPEED_FAR;
-    return "F" + String((int)spd);
+    String cmd = "F" + String((int)spd);
+    if (MP_DEBUG) {
+      Serial.printf("[MP] idx=%u dist=%.1f desired=%.1f ang=%.1f -> %s\n",
+                    (unsigned)mp_idx, dist, desired, angleDeg, cmd.c_str());
+    }
+    return cmd;
   }
 
   // 到点后对准指定朝向
   float headingErr = mp_normDeg(target.headingDeg - angleDeg);
   if (fabsf(headingErr) > MP_ANGLE_TOL) {
-    return (headingErr > 0) ? "R" + String((int)MP_TURN_RATE) : "L" + String((int)MP_TURN_RATE);
+    float rate = mp_turnRateFromErr(fabsf(headingErr));
+    String cmd = (headingErr > 0) ? "R" + String((int)rate) : "L" + String((int)rate);
+    if (MP_DEBUG) {
+      Serial.printf("[MP] idx=%u atPoint headingTgt=%.1f ang=%.1f err=%.1f rate=%.1f -> %s\n",
+                    (unsigned)mp_idx, target.headingDeg, angleDeg, headingErr, rate, cmd.c_str());
+    }
+    return cmd;
   }
 
   // 进入撞击阶段（若需要）

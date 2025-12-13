@@ -1,302 +1,415 @@
-/*
- * behavior-wall.ino — 右侧巡墙/避障行为（基于 3 路 ToF：F/R1/R2）
- *
- * 本文件主要包含：
- * - `decideWallFollowing(F_raw, R1_raw, R2_raw)`：
- *    输入三路 ToF 距离（单位 mm），输出一条底盘控制命令字符串：
- *    "Fxx" 前进、"Lxx"/"Rxx" 转向、"Bxx" 后退、"S" 停车。
- *
- * 算法大体结构：
- * 1) 读数有效性/滤波与保护
- *    - 对异常读数做 isValid 判断；全无数据时直接停车
- *    - 前向突降/坡度导致的“假障碍”做抑制（避免误触发前向避障）
- *
- * 2) 前向避障优先（保命逻辑）
- *    - 前方太近：停车/倒车/原地转向（包含多阶段的转角通过序列）
- *
- * 3) 常规巡墙（右侧贴墙）
- *    - R1 负责距离控制（太近左转、太远右转）
- *    - R2 辅助平行控制（R1 vs R2 的差值用于微调车身姿态）
- *
- * 4) 卡死检测/脱困序列
- *    - 通过“2 秒内位移过小”判定卡死
- *    - 触发倒车+转向等脱困动作序列
- *
- * 参数说明：
- * - 文件顶部定义了大量阈值与力度参数（距离阈值、速度、转向强度、确认帧数等），
- *   可在现场按 ToF 噪声与墙面反射情况调参。
- *
- * 调用关系：
- * - `owner-4.ino` 负责读取 ToF 并在 AUTO 模式下调用本函数，然后通过 UART 下发给 Servant 执行。
- */
-
 // behavior-wall.ino
-// 右侧巡墙逻辑：基于 3 路 ToF（前/右前/右后）实现避障与贴墙，参数可实时调整
-
-
-
-// if delta F from F now and F previous, is > 500
-//goind down slope -> b
-
+// 右侧巡墙逻辑：基于 3 路 ToF（前/右前/右后）实现 P 控制巡墙
+// 版本：胡同倒车改变姿态 + 小半径转向 + P控制
 
 #include <Arduino.h>
 
 // 检查传感器读数是否有效
 static bool isValid(uint16_t d) { return (d > 1 && d < 3000); }
 
-// ============ 参数设置 (可实时调整) ============
-// 前方避障参数
-uint16_t FRONT_TURN_TH   = 250;   // 前方避障距离 (17cm)
-uint16_t FRONT_BACKUP_TH = 50;    // 紧急倒车距离 (5cm)
-uint8_t  FRONT_CONFIRM_FRAMES = 3; // 连续 N 帧才认定前方有障碍
-uint16_t FRONT_SLOPE_SUPPRESS_MAX = 400; // 下坡假障碍抑制上限（只靠前向突降判据）
-uint16_t FRONT_DROP_GUARD_MM = 120;      // 单帧突降超过该值先忽略一帧
+// ============ 巡墙参数 ============
+volatile bool WALL_FOLLOW_ENABLED = true;
 
-// 巡墙距离参数
-float WALL_TOO_CLOSE      = 50.0f;  // <6cm: 太近 (危险)
-float WALL_IDEAL          = 80.0f;  // 9cm: 理想距离
-float WALL_TOO_FAR        = 120.0f; // >13cm: 太远
-float RIGHT_LOST_WALL     = 200.0f; // >20cm: 认为出胡同或丢墙
+float TOF_SPACING_MM = 143.0f;      // 两个右侧 ToF 在车身纵向的间距（mm）
+float WALL_TARGET_DIST = 200.0f;    // 目标离墙距离（mm）
+float WALL_DIST_KP     = 0.10f;     // 距离环 Kp
+float WALL_ANGLE_KP    = 1.50f;     // 角度环 Kp
+float FRONT_OBS_DIST   = 300.0f;    // 前方障碍阈值（mm）
 
-// 速度参数
-uint8_t SPEED_FWD        = 50;    // 前进速度
-uint8_t SPEED_BACK       = 25;    // 倒车速度
+int   WF_SPEED_FWD        = 50;     // 直行速度（0~100）
+int   WF_MAX_TURN_RIGHT   = 70;     // 最大右转力度（0~100）
+int   WF_MAX_TURN_LEFT    = 70;     // 最大左转力度（0~100）
 
-// 转向力度参数
-uint8_t TURN_SPIN        = 120;   // 原地旋转力度 (前方避障)
-uint8_t TURN_CORRECT     = 12;    // 左转修正 (离墙太近)
-uint8_t TURN_GENTLE      = 12;    // 右转找墙 (离墙太远)
-uint8_t TURN_HARD_FIND   = 120;   // 强力找墙 (出胡同)
-uint8_t TURN_TINY        = 10;    // 微调 (保持平行)
+float FRONT_PANIC_DIST = 60.0f;     // 前方紧急倒车距离（mm）
+float WALL_LOST_DIST   = 650.0f;    // 丢墙判定距离（mm）
 
-// 卡死检测参数
-unsigned long STALL_CHECK_TIME = 2000; // 每2秒检查一次是否卡死
-int STALL_MOVE_TH = 20; // 2秒内移动小于20mm视为卡死
+// ============ 胡同逃脱参数（倒车改变姿态 + 小半径转向）============
+float ALLEY_FRONT_CLOSE   = 250.0f;   // 前方距离 < 这个值触发胡同检测
+float ALLEY_RIGHT_CLOSE   = 350.0f;   // 右边距离 < 这个值触发胡同检测
+int   ALLEY_BACKUP_SPEED  = 40;       // 倒车速度 (0~100)
+int   ALLEY_BACKUP_TURN   = 30;       // 倒车时转向力度（向左打方向，让车尾向右靠墙）
+unsigned long ALLEY_BACKUP_MS = 600;  // 倒车时间 (ms)
+unsigned long ALLEY_CHECK_MS  = 100;  // 倒车后检测时间 (ms)
+float ALLEY_FRONT_CLEAR   = 400.0f;   // 前方距离 > 这个值认为"可以走了"
 
-// 动作序列时间 (毫秒)
-unsigned long MAX_BACKUP_MS = 600; 
-unsigned long SEQ_EXIT_STRAIGHT_MS = 6; // 出胡同: 先直行
-unsigned long SEQ_EXIT_TURN_MS     = 100; // 出胡同: 再强转
-unsigned long SEQ_EXIT_STOP_MS     = 100; // 出胡同: 后停车
+// 出胡同后小半径转向参数
+int   ALLEY_EXIT_TURN_STRENGTH = 50;  // 小半径右转力度 (0~100)
+int   ALLEY_EXIT_FWD_SPEED     = 40;  // 边走边转的前进速度
+unsigned long ALLEY_EXIT_TURN_MS = 400; // 小半径转向时间 (ms)
+unsigned long ALLEY_EXIT_FWD_MS  = 300; // 转完后直行稳定时间 (ms)
 
-// 前方避障序列 (停 -> 转 -> 停)
-unsigned long SEQ_FRONT_PRE_STOP_MS  = 100; 
-unsigned long SEQ_FRONT_TURN_MS      = 200; 
-unsigned long SEQ_FRONT_POST_STOP_MS = 100; 
+// 出拐角序列时间（正常拐角，不是胡同）
+unsigned long WF_SEQ_EXIT_STRAIGHT_MS = 350;
+unsigned long WF_SEQ_EXIT_TURN_MS     = 450;
+unsigned long WF_SEQ_EXIT_PAUSE_MS    = 200;
 
-// 脱困序列 (倒车 -> 旋转)
-unsigned long SEQ_STUCK_BACK_MS = 800;  
-unsigned long SEQ_STUCK_TURN_MS = 100;
+// 直行死区
+int WF_TURN_DEADBAND = 14;
 
-// 参数更新函数（从UART接收参数）
+// 找墙参数
+int   SEEK_TURN_STRENGTH    = 60;   // 找墙时原地右转力度 (0~100)
+int   SEEK_FWD_SPEED        = 50;   // 找到墙后前进速度 (0~100)
+float SEEK_WALL_FOUND_DIST  = 800.0f; // 前方 ToF < 这个值认为"看到墙了"
+float SEEK_WALL_CLOSE_DIST  = 400.0f; // 前方 ToF < 这个值认为"靠近墙了"
+
+// 调试变量
+float debugWallAngleDeg = 0.0f;
+float debugDistError    = 0.0f;
+int   debugTurn         = 0;
+
+// 状态枚举
+enum WallFollowState {
+    WF_NORMAL,
+    WF_OBSTACLE_FRONT,
+    WF_PANIC_BACKUP,
+    WF_LOST_WALL,
+    WF_CORNER,
+    WF_EXITING,
+    // 胡同逃脱（倒车改变姿态 + 小半径转向）
+    WF_ALLEY_BACKUP,      // 胡同：倒车（带转向）
+    WF_ALLEY_CHECK,       // 胡同：检测是否出来了
+    WF_ALLEY_EXIT_TURN,   // 胡同：出来后小半径右转
+    WF_ALLEY_EXIT_FWD,    // 胡同：转完后直行稳定
+    // 找墙状态
+    WF_SEEK_TURN,         // 找墙：原地右转（Pivot）对准墙
+    WF_SEEK_FWD           // 找墙：向前走向墙
+};
+
+static WallFollowState wfState = WF_NORMAL;
+static unsigned long wfSequenceStartTime = 0;
+static bool wfExitSequenceActive = false;
+static unsigned long alleyPhaseStartTime = 0;
+
+// ===== debug/telemetry getters =====
+uint8_t wf_getState() { return (uint8_t)wfState; }
+float wf_getAngleDeg() { return debugWallAngleDeg; }
+float wf_getDistError() { return debugDistError; }
+int wf_getTurn() { return debugTurn; }
+
+// 参数更新函数
 void updateWallParam(const String& paramName, float value) {
-    if (paramName == "FRONT_TURN_TH") FRONT_TURN_TH = (uint16_t)value;
-    else if (paramName == "FRONT_BACKUP_TH") FRONT_BACKUP_TH = (uint16_t)value;
-    else if (paramName == "FRONT_CONFIRM_FRAMES") FRONT_CONFIRM_FRAMES = (uint8_t)value;
-    else if (paramName == "FRONT_SLOPE_SUPPRESS_MAX") FRONT_SLOPE_SUPPRESS_MAX = (uint16_t)value;
-    else if (paramName == "FRONT_DROP_GUARD_MM") FRONT_DROP_GUARD_MM = (uint16_t)value;
-    else if (paramName == "WALL_TOO_CLOSE") WALL_TOO_CLOSE = value;
-    else if (paramName == "WALL_IDEAL") WALL_IDEAL = value;
-    else if (paramName == "WALL_TOO_FAR") WALL_TOO_FAR = value;
-    else if (paramName == "RIGHT_LOST_WALL") RIGHT_LOST_WALL = value;
-    else if (paramName == "SPEED_FWD") SPEED_FWD = (uint8_t)value;
-    else if (paramName == "SPEED_BACK") SPEED_BACK = (uint8_t)value;
-    else if (paramName == "TURN_SPIN") TURN_SPIN = (uint8_t)value;
-    else if (paramName == "TURN_CORRECT") TURN_CORRECT = (uint8_t)value;
-    else if (paramName == "TURN_GENTLE") TURN_GENTLE = (uint8_t)value;
-    else if (paramName == "TURN_HARD_FIND") TURN_HARD_FIND = (uint8_t)value;
-    else if (paramName == "TURN_TINY") TURN_TINY = (uint8_t)value;
-    else if (paramName == "STALL_CHECK_TIME") STALL_CHECK_TIME = (unsigned long)value;
-    else if (paramName == "STALL_MOVE_TH") STALL_MOVE_TH = (int)value;
-    else if (paramName == "MAX_BACKUP_MS") MAX_BACKUP_MS = (unsigned long)value;
-    else if (paramName == "SEQ_EXIT_STRAIGHT_MS") SEQ_EXIT_STRAIGHT_MS = (unsigned long)value;
-    else if (paramName == "SEQ_EXIT_TURN_MS") SEQ_EXIT_TURN_MS = (unsigned long)value;
-    else if (paramName == "SEQ_EXIT_STOP_MS") SEQ_EXIT_STOP_MS = (unsigned long)value;
-    else if (paramName == "SEQ_FRONT_PRE_STOP_MS") SEQ_FRONT_PRE_STOP_MS = (unsigned long)value;
-    else if (paramName == "SEQ_FRONT_TURN_MS") SEQ_FRONT_TURN_MS = (unsigned long)value;
-    else if (paramName == "SEQ_FRONT_POST_STOP_MS") SEQ_FRONT_POST_STOP_MS = (unsigned long)value;
-    else if (paramName == "SEQ_STUCK_BACK_MS") SEQ_STUCK_BACK_MS = (unsigned long)value;
-    else if (paramName == "SEQ_STUCK_TURN_MS") SEQ_STUCK_TURN_MS = (unsigned long)value;
+    if (paramName == "WALL_FOLLOW_ENABLED") WALL_FOLLOW_ENABLED = (value > 0.5f);
+    else if (paramName == "TOF_SPACING_MM") TOF_SPACING_MM = value;
+    else if (paramName == "WALL_TARGET_DIST") WALL_TARGET_DIST = value;
+    else if (paramName == "WALL_DIST_KP") WALL_DIST_KP = value;
+    else if (paramName == "WALL_ANGLE_KP") WALL_ANGLE_KP = value;
+    else if (paramName == "FRONT_OBS_DIST") FRONT_OBS_DIST = value;
+    else if (paramName == "WF_SPEED_FWD") WF_SPEED_FWD = (int)value;
+    else if (paramName == "WF_MAX_TURN_RIGHT") WF_MAX_TURN_RIGHT = (int)value;
+    else if (paramName == "WF_MAX_TURN_LEFT") WF_MAX_TURN_LEFT = (int)value;
+    else if (paramName == "FRONT_PANIC_DIST") FRONT_PANIC_DIST = value;
+    else if (paramName == "WALL_LOST_DIST") WALL_LOST_DIST = value;
+    // 胡同倒车参数
+    else if (paramName == "ALLEY_FRONT_CLOSE") ALLEY_FRONT_CLOSE = value;
+    else if (paramName == "ALLEY_RIGHT_CLOSE") ALLEY_RIGHT_CLOSE = value;
+    else if (paramName == "ALLEY_BACKUP_SPEED") ALLEY_BACKUP_SPEED = (int)value;
+    else if (paramName == "ALLEY_BACKUP_TURN") ALLEY_BACKUP_TURN = (int)value;
+    else if (paramName == "ALLEY_BACKUP_MS") ALLEY_BACKUP_MS = (unsigned long)value;
+    else if (paramName == "ALLEY_CHECK_MS") ALLEY_CHECK_MS = (unsigned long)value;
+    else if (paramName == "ALLEY_FRONT_CLEAR") ALLEY_FRONT_CLEAR = value;
+    // 出胡同后小半径转向参数
+    else if (paramName == "ALLEY_EXIT_TURN_STRENGTH") ALLEY_EXIT_TURN_STRENGTH = (int)value;
+    else if (paramName == "ALLEY_EXIT_FWD_SPEED") ALLEY_EXIT_FWD_SPEED = (int)value;
+    else if (paramName == "ALLEY_EXIT_TURN_MS") ALLEY_EXIT_TURN_MS = (unsigned long)value;
+    else if (paramName == "ALLEY_EXIT_FWD_MS") ALLEY_EXIT_FWD_MS = (unsigned long)value;
+    // 出拐角序列
+    else if (paramName == "WF_SEQ_EXIT_STRAIGHT_MS") WF_SEQ_EXIT_STRAIGHT_MS = (unsigned long)value;
+    else if (paramName == "WF_SEQ_EXIT_TURN_MS") WF_SEQ_EXIT_TURN_MS = (unsigned long)value;
+    else if (paramName == "WF_SEQ_EXIT_PAUSE_MS") WF_SEQ_EXIT_PAUSE_MS = (unsigned long)value;
+    else if (paramName == "WF_TURN_DEADBAND") WF_TURN_DEADBAND = (int)value;
+    // 找墙参数
+    else if (paramName == "SEEK_TURN_STRENGTH") SEEK_TURN_STRENGTH = (int)value;
+    else if (paramName == "SEEK_FWD_SPEED") SEEK_FWD_SPEED = (int)value;
+    else if (paramName == "SEEK_WALL_FOUND_DIST") SEEK_WALL_FOUND_DIST = value;
+    else if (paramName == "SEEK_WALL_CLOSE_DIST") SEEK_WALL_CLOSE_DIST = value;
 }
 
+static int clampInt(int v, int lo, int hi) { return constrain(v, lo, hi); }
+
+// ============ 核心计算：P控制 + 状态机 ============
+static int calculateWallFollowTurn(float F, float R1, float R2) {
+    // 处理传感器数据
+    bool d1Valid = (R1 > 30.0f && R1 < WALL_LOST_DIST);
+    bool d2Valid = (R2 > 30.0f && R2 < WALL_LOST_DIST);
+    float d1 = d1Valid ? R1 : 999.0f;  // 右前
+    float d2 = d2Valid ? R2 : 999.0f;  // 右后
+
+    bool frontValid   = (F > 0.0f && F < 2000.0f);
+    bool frontPanic   = (frontValid && F < FRONT_PANIC_DIST);
+    bool frontBlocked = (frontValid && F < FRONT_OBS_DIST);
+
+    // 胡同检测：前方近 + 两个右边ToF都近（更严格的条件）
+    // 只在正常状态下才检测胡同，避免误触发
+    bool inAlley = false;
+    if (wfState == WF_NORMAL) {
+        bool frontNear = (frontValid && F < ALLEY_FRONT_CLOSE);
+        bool rightBothNear = (R1 > 30.0f && R1 < ALLEY_RIGHT_CLOSE) && 
+                             (R2 > 30.0f && R2 < ALLEY_RIGHT_CLOSE);
+        inAlley = frontNear && rightBothNear;
+    }
+
+    // 出拐角检测（正常拐角）
+    bool headOut = (d1 >= 999.0f);
+    bool tailIn  = (d2 < WALL_LOST_DIST);
+    bool isExitingCorner = (headOut && tailIn);
+
+    // ========== 胡同逃脱状态机（倒车改变姿态 + 小半径转向）==========
+    
+    // 阶段1：倒车（带左转向，让车尾向右甩）
+    if (wfState == WF_ALLEY_BACKUP) {
+        unsigned long elapsed = millis() - alleyPhaseStartTime;
+        if (elapsed < ALLEY_BACKUP_MS) {
+            debugWallAngleDeg = 0; debugDistError = 0;
+            debugTurn = -ALLEY_BACKUP_TURN;
+            return -ALLEY_BACKUP_TURN;
+        } else {
+            // 倒车完成 → 进入检测阶段
+            wfState = WF_ALLEY_CHECK;
+            alleyPhaseStartTime = millis();
+            debugTurn = 0;
+            return 0;
+        }
+    }
+
+    // 阶段2：检测前方是否清了
+    if (wfState == WF_ALLEY_CHECK) {
+        unsigned long elapsed = millis() - alleyPhaseStartTime;
+        if (elapsed < ALLEY_CHECK_MS) {
+            debugTurn = 0;
+            return 0; // 停车检测
+        } else {
+            // 检测完毕：判断前方是否可以走了
+            if (F >= ALLEY_FRONT_CLEAR) {
+                // 前方空了 → 进入小半径转向阶段
+                wfState = WF_ALLEY_EXIT_TURN;
+                alleyPhaseStartTime = millis();
+                debugTurn = ALLEY_EXIT_TURN_STRENGTH;
+                return ALLEY_EXIT_TURN_STRENGTH;
+            } else {
+                // 前方还是堵 → 继续倒车
+                wfState = WF_ALLEY_BACKUP;
+                alleyPhaseStartTime = millis();
+                return -ALLEY_BACKUP_TURN;
+            }
+        }
+    }
+
+    // 阶段3：出胡同后小半径右转（边走边转）
+    if (wfState == WF_ALLEY_EXIT_TURN) {
+        unsigned long elapsed = millis() - alleyPhaseStartTime;
+        if (elapsed < ALLEY_EXIT_TURN_MS) {
+            debugWallAngleDeg = 0; debugDistError = 0;
+            debugTurn = ALLEY_EXIT_TURN_STRENGTH;
+            return ALLEY_EXIT_TURN_STRENGTH;
+        } else {
+            // 转向完成 → 进入直行稳定阶段
+            wfState = WF_ALLEY_EXIT_FWD;
+            alleyPhaseStartTime = millis();
+            debugTurn = 0;
+            return 0;
+        }
+    }
+
+    // 阶段4：转完后直行稳定
+    if (wfState == WF_ALLEY_EXIT_FWD) {
+        unsigned long elapsed = millis() - alleyPhaseStartTime;
+        if (elapsed < ALLEY_EXIT_FWD_MS) {
+            debugWallAngleDeg = 0; debugDistError = 0;
+            debugTurn = 0;
+            return 0; // 直行
+        } else {
+            // 稳定完成 → 恢复正常巡墙
+            wfState = WF_NORMAL;
+        }
+    }
+
+    // ========== 出拐角序列（正常拐角，不是胡同）==========
+    if (wfExitSequenceActive) {
+        wfState = WF_EXITING;
+        unsigned long elapsed = millis() - wfSequenceStartTime;
+        debugWallAngleDeg = 0; debugDistError = 0;
+
+        if (elapsed < WF_SEQ_EXIT_STRAIGHT_MS) {
+            debugTurn = 0;
+            return 0; // 直行
+        } else if (elapsed < WF_SEQ_EXIT_STRAIGHT_MS + WF_SEQ_EXIT_TURN_MS) {
+            debugTurn = (int)(WF_MAX_TURN_RIGHT * 0.8f);
+            return (int)(WF_MAX_TURN_RIGHT * 0.8f); // 右转
+        } else if (elapsed < WF_SEQ_EXIT_STRAIGHT_MS + WF_SEQ_EXIT_TURN_MS + WF_SEQ_EXIT_PAUSE_MS) {
+            debugTurn = 0;
+            return 0; // 暂停
+        } else {
+            wfExitSequenceActive = false;
+        }
+    }
+
+    if (isExitingCorner && !wfExitSequenceActive) {
+        wfExitSequenceActive = true;
+        wfSequenceStartTime = millis();
+        wfState = WF_EXITING;
+        debugTurn = 0;
+        return 0;
+    }
+
+    // ========== 安全状态 ==========
+    
+    // 紧急倒车（贴脸了）
+    if (frontPanic) {
+        wfState = WF_PANIC_BACKUP;
+        debugWallAngleDeg = 0; debugDistError = 0;
+        debugTurn = 0;
+        return 0;
+    }
+
+    // 检测到胡同（前方近 + 右边近）→ 触发倒车改变姿态
+    if (inAlley) {
+        wfState = WF_ALLEY_BACKUP;
+        alleyPhaseStartTime = millis();
+        debugWallAngleDeg = 0; debugDistError = 0;
+        debugTurn = -ALLEY_BACKUP_TURN;
+        return -ALLEY_BACKUP_TURN;
+    }
+
+    // 前方被堵但不是胡同（只有前方近，右边没墙）→ 简单左转避障
+    if (frontBlocked) {
+        wfState = WF_OBSTACLE_FRONT;
+        debugWallAngleDeg = 0; debugDistError = 0;
+        debugTurn = -WF_MAX_TURN_LEFT;
+        return -WF_MAX_TURN_LEFT;
+    }
+
+    // ========== 找墙状态机 ==========
+    
+    // 原地右转找墙
+    if (wfState == WF_SEEK_TURN) {
+        debugWallAngleDeg = 0; debugDistError = 0;
+        if (F < SEEK_WALL_FOUND_DIST) {
+            wfState = WF_SEEK_FWD;
+            debugTurn = 0;
+            return 0;
+        }
+        debugTurn = SEEK_TURN_STRENGTH;
+        return SEEK_TURN_STRENGTH;
+    }
+
+    // 向前走向墙
+    if (wfState == WF_SEEK_FWD) {
+        debugWallAngleDeg = 0; debugDistError = 0;
+        if (F < SEEK_WALL_CLOSE_DIST) {
+            wfState = WF_NORMAL;
+        }
+        if (d1 < WALL_LOST_DIST || d2 < WALL_LOST_DIST) {
+            wfState = WF_NORMAL;
+        }
+        debugTurn = 0;
+        return 0;
+    }
+
+    // 两边都丢墙 → 进入找墙模式
+    if (d1 >= 999.0f && d2 >= 999.0f) {
+        wfState = WF_SEEK_TURN;
+        debugWallAngleDeg = 0; debugDistError = 0;
+        debugTurn = SEEK_TURN_STRENGTH;
+        return SEEK_TURN_STRENGTH;
+    }
+
+    // ========== 正常 P 控制巡墙 ==========
+    wfState = WF_NORMAL;
+
+    // 估算墙角度
+    float wallAngleDeg = 0.0f;
+    if (d1Valid && d2Valid) {
+        float diff = d1 - d2;
+        float wallAngleRad = atan2f(diff, max(1.0f, TOF_SPACING_MM));
+        wallAngleDeg = wallAngleRad * 180.0f / PI;
+    }
+
+    // 距离误差
+    float distError = WALL_TARGET_DIST - d1;
+
+    debugWallAngleDeg = wallAngleDeg;
+    debugDistError = distError;
+
+    // P 控制公式
+    float turn = (WALL_DIST_KP * (d1 - WALL_TARGET_DIST)) + (WALL_ANGLE_KP * wallAngleDeg);
+    int ti = (int)lroundf(turn);
+    debugTurn = clampInt(ti, -WF_MAX_TURN_LEFT, WF_MAX_TURN_RIGHT);
+    return debugTurn;
+}
+
+// ============ 主决策函数 ============
 String decideWallFollowing(uint16_t F_raw, uint16_t R1_raw, uint16_t R2_raw) {
-    // 状态记录变量
-    static unsigned long backupStartTime = 0;
-    static bool isBackingUp = false;           
-    static unsigned long exitStartTime = 0;
-    static bool isExitingSequenceActive = false; 
-
-    // 前方避障变量
-    static bool isFrontTurnSequenceActive = false; 
-    static uint8_t frontSeqStage = 0; 
-    static unsigned long stageStartTime = 0;
-
-    // 卡死检测变量
-    static unsigned long lastStallCheckTime = 0;
-    static uint16_t lastF = 0, lastR1 = 0;
-    static bool isStuckSequenceActive = false;
-    static unsigned long stuckStartTime = 0;
-
-    // 下坡/抖动抑制用的前方滤波与计数
-    static float F_filt = 5000.0f;
-    static float F_prev = 5000.0f;
-    static uint8_t frontLowCount = 0;
-
-    // 1. 数据预处理
     bool hasF  = isValid(F_raw);
     bool hasR1 = isValid(R1_raw);
     bool hasR2 = isValid(R2_raw);
+    if (!hasF && !hasR1 && !hasR2) return "S";
 
-    if (!hasF && !hasR1 && !hasR2) { return "S"; } // 启动保护: 全无数据则停车
+    float F  = hasF  ? (float)F_raw  : 5000.0f;
+    float R1 = hasR1 ? (float)R1_raw : 5000.0f;
+    float R2 = hasR2 ? (float)R2_raw : 5000.0f;
 
-    float F  = (hasF && F_raw < 5000) ? F_raw : 5000.0f;
-    float R1 = hasR1 ? R1_raw : 5000.0f;
-    float R2 = hasR2 ? R2_raw : 5000.0f; 
-    bool isHeadOut = (R1 > RIGHT_LOST_WALL); 
-
-    // 前向距离低通 + 单帧突降守门：只有前向可用时，以时间连续性抑制下坡假障碍
-    F_filt = 0.6f * F_filt + 0.4f * F;
-    if ((F_prev - F_filt) > FRONT_DROP_GUARD_MM && F_filt < FRONT_SLOPE_SUPPRESS_MAX) {
-        // 认为是姿态/抖动造成的瞬时突降，先不触发，拉回到上次值
-        F_filt = F_prev;
-    }
-    float F_use = (F < F_filt) ? F : F_filt; // 贴脸保护仍看原始更小值
-    frontLowCount = (F_filt < FRONT_TURN_TH) ? (uint8_t)(frontLowCount + 1) : 0;
-    bool frontConfirmed = frontLowCount >= FRONT_CONFIRM_FRAMES;
-    F_prev = F_filt;
-
-
-    // ================= [优先级 1] 卡死脱困序列 (倒车 -> 旋转) =================
-    // 触发后强制执行，用于从障碍物中拔出来
-    if (isStuckSequenceActive) {
-        unsigned long dt = millis() - stuckStartTime;
-        if (dt < SEQ_STUCK_BACK_MS) { return "B" + String(SPEED_BACK + 10); } // 强力倒车
-        else if (dt < (SEQ_STUCK_BACK_MS + SEQ_STUCK_TURN_MS)) { return "L" + String(TURN_SPIN); } // 换个方向
-        else { 
-            isStuckSequenceActive = false; 
-            lastStallCheckTime = millis(); 
-            lastF = F; lastR1 = R1;
-        }
-        return "B" + String(SPEED_BACK);
-    }
-
-    // ================= [逻辑核心] 卡死检测 =================
-    if (millis() - lastStallCheckTime > STALL_CHECK_TIME) {
-        int deltaF = abs((int)F - (int)lastF);
-        bool isBusy = (isFrontTurnSequenceActive || isExitingSequenceActive || isBackingUp);
-        
-        // 如果2秒内没怎么动 (delta < 2cm) 且没在执行其他任务
-        if (!isBusy && deltaF < STALL_MOVE_TH) {
-            // 判定为卡死，触发脱困序列 (倒车)
-            isStuckSequenceActive = true;
-            stuckStartTime = millis();
-            return "B" + String(SPEED_BACK); 
-        }
-        // 更新历史位置
-        lastF = F; lastR1 = R1;
-        lastStallCheckTime = millis();
-    }
-
-    // ================= [优先级 2] 常规动作 =================
-
-    // 0. 贴脸保护 (距离 < 5cm)
-    if (F_use < FRONT_BACKUP_TH) {
-        if (!isBackingUp) { isBackingUp = true; backupStartTime = millis(); }
-        if (millis() - backupStartTime > MAX_BACKUP_MS) { 
-            // 倒车超时 -> 强制转弯序列
-            isFrontTurnSequenceActive = true; 
-            frontSeqStage = 1; 
-            stageStartTime = millis();
-            return "S"; 
-        }
-        return "B" + String(SPEED_BACK);
-    } else { isBackingUp = false; }
-
-    // 1. 前方避障序列 (停 -> 盲转 -> 停)
-    if ((frontConfirmed && F_filt <= FRONT_TURN_TH && R1 <= 120.0F) || isFrontTurnSequenceActive) {
-        if (!isFrontTurnSequenceActive) { isFrontTurnSequenceActive = true; frontSeqStage = 1; stageStartTime = millis(); }
-        unsigned long dt = millis() - stageStartTime;
-
-        // 阶段1: 停车稳住
-        if (frontSeqStage == 1) {
-            if (dt < SEQ_FRONT_PRE_STOP_MS) return "S"; 
-            else { frontSeqStage = 2; stageStartTime = millis(); return "L" + String(TURN_SPIN); }
-        }
-        // 阶段2: 闭眼转弯
-        if (frontSeqStage == 2) {
-            if (dt < SEQ_FRONT_TURN_MS) return "L" + String(TURN_SPIN);
-            else { frontSeqStage = 3; stageStartTime = millis(); return "S"; }
-        }
-        // 阶段3: 转后观察
-        if (frontSeqStage == 3) {
-            if (dt < SEQ_FRONT_POST_STOP_MS) return "S"; 
-            else { isFrontTurnSequenceActive = false; frontSeqStage = 0; }
-        }
+    if (!WALL_FOLLOW_ENABLED) {
+        wfState = WF_NORMAL;
         return "S";
     }
 
+    int turn = calculateWallFollowTurn(F, R1, R2);
 
-    if (frontConfirmed && F_filt <= FRONT_TURN_TH && R1 > 120.0F) {
-        return "R" + String(TURN_HARD_FIND); // 前方近、右侧空：大幅右找出口
+    // ========== 根据状态输出命令 ==========
+
+    // 胡同逃脱：倒车（BL = 倒车左转，车尾向右甩）
+    if (wfState == WF_ALLEY_BACKUP) {
+        return "BL" + String(ALLEY_BACKUP_SPEED);
     }
 
-    // 2. 出胡同序列 (防撞角: 直行 -> 猛拐 -> 停)
-    if ((isHeadOut && R2 <= RIGHT_LOST_WALL) || isExitingSequenceActive) {
-        if (!isHeadOut && !isExitingSequenceActive) { }
-        else {
-            if (!isExitingSequenceActive) { isExitingSequenceActive = true; exitStartTime = millis(); }
-            unsigned long dt = millis() - exitStartTime;
-            if (dt < SEQ_EXIT_STRAIGHT_MS) { return "F" + String(SPEED_FWD); }
-            else if (dt < (SEQ_EXIT_STRAIGHT_MS + SEQ_EXIT_TURN_MS)) { return "R" + String(TURN_HARD_FIND); }
-            else if (dt < (SEQ_EXIT_STRAIGHT_MS + SEQ_EXIT_TURN_MS + SEQ_EXIT_STOP_MS)) { return "S"; }
-            else { isExitingSequenceActive = false; }
-            if (isExitingSequenceActive) return "F" + String(SPEED_FWD);
-        }
+    // 胡同逃脱：检测阶段（停车）
+    if (wfState == WF_ALLEY_CHECK) {
+        return "S";
     }
 
-    // 3. 常规巡墙 (简化版: R1主导，R2辅助)
-    if (!isHeadOut) {
-        float diff = R1 - R2;
-        
-        // [特殊保护] 刚转过直角弯，车尾(R2)还在后面很远，diff 是负的大数
-        // 此时强制直行，防止误判为"车头扎墙"
-        if (diff < -100.0f) { return "F" + String(SPEED_FWD); }
-
-        // ============ 第一层：只看 R1 (距离控制) ============
-        
-        // 1. 太近了 (R1 < 6cm) -> 必须左转远离 (保命)
-        if (R1 < WALL_TOO_CLOSE) { 
-            return "L" + String(TURN_CORRECT); 
-        }
-
-        // 2. 太远了 (R1 > 13cm) -> 必须右转去找墙 (防丢)
-        if (R1 > WALL_TOO_FAR) { 
-            return "R" + String(TURN_GENTLE); 
-        }
-
-        // ============ 第二层：只看 R1 vs R2 (平行控制) ============
-        // 能走到这里，说明 R1 距离适中 (在 6cm ~ 13cm 之间)，很安全
-        // 这时候我们才用 R2 来微调车身姿态
-        
-        // 3. 车头扎向墙 (R1 比 R2 小，说明车头歪进去了)
-        // 稍微左转一点点回正
-        if (diff < -5.0f) { 
-            return "L" + String(TURN_TINY); 
-        }
-
-        // 4. 车头撇向外 (R1 比 R2 大，说明车头歪出去了)
-        // 稍微右转一点点回正
-        if (diff > 5.0f) { 
-            return "R" + String(TURN_TINY); 
-        }
-        
-        // 5. 既不近也不远，而且是平行的 -> 完美，直行
-        return "F" + String(SPEED_FWD);
-    }
-    else { 
-        // 6. 找不到墙 (空地模式) -> 画大圈找墙
-        return "R" + String(30); 
+    // 胡同逃脱：出胡同后小半径右转（R = 边走边右转）
+    if (wfState == WF_ALLEY_EXIT_TURN) {
+        return "R" + String(ALLEY_EXIT_TURN_STRENGTH);
     }
 
-    return "F" + String(SPEED_FWD);
+    // 胡同逃脱：转完后直行稳定
+    if (wfState == WF_ALLEY_EXIT_FWD) {
+        return "F" + String(ALLEY_EXIT_FWD_SPEED);
+    }
+
+    // 前方障碍（简单左转）
+    if (wfState == WF_OBSTACLE_FRONT) {
+        return "PL" + String(WF_MAX_TURN_LEFT);
+    }
+
+    // 找墙
+    if (wfState == WF_SEEK_TURN) {
+        return "PR" + String(SEEK_TURN_STRENGTH);
+    }
+    if (wfState == WF_SEEK_FWD) {
+        return "F" + String(SEEK_FWD_SPEED);
+    }
+
+    // 紧急倒车
+    if (wfState == WF_PANIC_BACKUP) {
+        return "B30";
+    }
+
+    // 出拐角序列
+    if (wfState == WF_EXITING) {
+        unsigned long elapsed = millis() - wfSequenceStartTime;
+        if (elapsed < WF_SEQ_EXIT_STRAIGHT_MS) return "F" + String(WF_SPEED_FWD);
+        if (elapsed < WF_SEQ_EXIT_STRAIGHT_MS + WF_SEQ_EXIT_TURN_MS) return "R" + String(abs(turn));
+        return "S";
+    }
+
+    // 正常巡墙：根据 turn 值决定（边走边转）
+    int dead = WF_TURN_DEADBAND;
+    if (dead < 0) dead = 0;
+    if (abs(turn) <= dead) {
+        return "F" + String(WF_SPEED_FWD);
+    }
+
+    if (turn > 0) return "R" + String(turn);
+    return "L" + String(-turn);
 }

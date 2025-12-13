@@ -83,7 +83,8 @@ void loop() {
 void ToF_init() {
   // 1. init I2C 
   Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(100000); 
+  // VL53L4CX 建议使用 400kHz I2C（线长/干扰大时可降回 100kHz）
+  Wire.setClock(400000);
 
   // 2.low
   Serial.println(">>> Resetting sensors...");
@@ -151,9 +152,13 @@ bool ToF_read(uint16_t d[3]) {
   d[1] = last_distances[1];
   d[2] = last_distances[2];
 
-  Serial.print("F: ");  Serial.print(d[0]); 
-  Serial.print(" mm   R1: "); Serial.print(d[1]); 
-  Serial.print(" mm   R2: "); Serial.print(d[2]); Serial.println(" mm");
+  // 注意：这里是底层驱动，频繁 Serial.print 会显著拖慢 Owner 主循环，造成“延迟高”
+  // 如需调试可临时打开该宏（或改为更低频率输出）
+  #if defined(TOF_DEBUG_PRINT) && TOF_DEBUG_PRINT
+    Serial.print("F: ");  Serial.print(d[0]); 
+    Serial.print(" mm   R1: "); Serial.print(d[1]); 
+    Serial.print(" mm   R2: "); Serial.print(d[2]); Serial.println(" mm");
+  #endif
 
   return true;
 }

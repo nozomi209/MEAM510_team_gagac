@@ -56,9 +56,23 @@ IPAddress subnet(255, 255, 255, 0);
 
 // Wall-following behavior
 String decideWallFollowing(uint16_t F, uint16_t R1, uint16_t R2);
+// Wall-following debug (implemented in behavior-wall.ino)
+uint8_t wf_getState();
+float wf_getAngleDeg();
+float wf_getDistError();
+int wf_getTurn();
 
 HardwareSerial ServantSerial(1);
 uint16_t tofDist[3];
+
+// Latest wall-follow telemetry (for Web display)
+static uint8_t g_wfAuto = 0;
+static uint8_t g_wfState = 0;
+static int g_wfTurn = 0;
+static float g_wfAngle = 0.0f;
+static float g_wfErr = 0.0f;
+static String g_wfCmd = "S";
+static uint32_t g_wfLastMs = 0;
 
 // 自动模式开关，默认关闭
 bool isAutoRunning = false;
@@ -83,15 +97,83 @@ float planStartX = 0.0f, planStartY = 0.0f;
 // ToF 校准（单位: mm），R2 实际测距偏小可在此调正
 int16_t TOF_OFFSET_F  = 0;
 int16_t TOF_OFFSET_R1 = 0;
-int16_t TOF_OFFSET_R2 = 15;   // 如仍偏小，可再增大 (例 20~30)
-float   TOF_SCALE_F   = 1.03; // R0/Front 远距离偏小 -> 稍放大
+int16_t TOF_OFFSET_R2 = -2;   // R2 常见偏小：可在网页用 PARAM:TOF_OFFSET_R2=xx 微调
+float   TOF_SCALE_F   = 0.98;
 float   TOF_SCALE_R1  = 1.00;
 float   TOF_SCALE_R2  = 1.00; // 若需要比例修正，可调至 1.05 等
+
+// ToF 修正增强：滤波/跳变抑制（仍保持“线性标定”为主）
+// - TOF_ALPHA: 0~1，越大越“跟手”，越小越平滑（想更快就调大）
+// - TOF_JUMP_MM: 单次最大允许变化（mm），用于抑制偶发跳变
+float   TOF_ALPHA     = 0.50f;
+uint16_t TOF_JUMP_MM  = 200;   // 跳变限幅：更小更稳
+uint16_t TOF_MIN_MM   = 2;     // <=2mm 视为无效（与 behavior-wall 的 isValid 对齐）
+uint16_t TOF_MAX_MM   = 5000;  // 统一上限，超过当作远处
+
+static float tofFilt[3] = {NAN, NAN, NAN};
 
 static uint16_t applyToFCal(uint16_t raw, int16_t offset, float scale = 1.0f) {
   int32_t v = (int32_t)((float)raw * scale) + offset;
   if (v < 0) v = 0;
   return (uint16_t)v;
+}
+
+static bool isToFRawValid(uint16_t raw) {
+  return (raw >= TOF_MIN_MM && raw <= TOF_MAX_MM);
+}
+
+static uint16_t applyToFCalFiltered(uint16_t raw, uint8_t idx) {
+  // idx: 0=F, 1=R1, 2=R2
+  int16_t offset = 0;
+  float scale = 1.0f;
+  if (idx == 0) { offset = TOF_OFFSET_F;  scale = TOF_SCALE_F; }
+  if (idx == 1) { offset = TOF_OFFSET_R1; scale = TOF_SCALE_R1; }
+  if (idx == 2) { offset = TOF_OFFSET_R2; scale = TOF_SCALE_R2; }
+
+  // raw 无效：直接保持上一帧滤波值（若还没初始化则返回 0）
+  if (!isToFRawValid(raw)) {
+    if (isnan(tofFilt[idx])) return 0;
+    return (uint16_t)(tofFilt[idx] + 0.5f);
+  }
+
+  float v = (float)applyToFCal(raw, offset, scale);
+  if (v < 0.0f) v = 0.0f;
+  if (v > (float)TOF_MAX_MM) v = (float)TOF_MAX_MM;
+
+  // 跳变抑制：单次变化不超过 TOF_JUMP_MM
+  if (!isnan(tofFilt[idx])) {
+    float diff = v - tofFilt[idx];
+    if (diff > (float)TOF_JUMP_MM) v = tofFilt[idx] + (float)TOF_JUMP_MM;
+    else if (diff < -(float)TOF_JUMP_MM) v = tofFilt[idx] - (float)TOF_JUMP_MM;
+  }
+
+  // IIR 滤波：y = y + a*(x-y)
+  float a = TOF_ALPHA;
+  if (a < 0.0f) a = 0.0f;
+  if (a > 1.0f) a = 1.0f;
+  if (isnan(tofFilt[idx])) tofFilt[idx] = v;
+  else tofFilt[idx] = tofFilt[idx] + a * (v - tofFilt[idx]);
+
+  if (tofFilt[idx] < 0.0f) tofFilt[idx] = 0.0f;
+  if (tofFilt[idx] > (float)TOF_MAX_MM) tofFilt[idx] = (float)TOF_MAX_MM;
+  return (uint16_t)(tofFilt[idx] + 0.5f);
+}
+
+static void updateToFParam(const String &key, float val) {
+  if (key == "TOF_OFFSET_F") TOF_OFFSET_F = (int16_t)val;
+  else if (key == "TOF_OFFSET_R1") TOF_OFFSET_R1 = (int16_t)val;
+  else if (key == "TOF_OFFSET_R2") TOF_OFFSET_R2 = (int16_t)val;
+  else if (key == "TOF_SCALE_F") TOF_SCALE_F = val;
+  else if (key == "TOF_SCALE_R1") TOF_SCALE_R1 = val;
+  else if (key == "TOF_SCALE_R2") TOF_SCALE_R2 = val;
+  else if (key == "TOF_ALPHA") TOF_ALPHA = val;
+  else if (key == "TOF_JUMP_MM") TOF_JUMP_MM = (uint16_t)val;
+  else if (key == "TOF_MIN_MM") TOF_MIN_MM = (uint16_t)val;
+  else if (key == "TOF_MAX_MM") TOF_MAX_MM = (uint16_t)val;
+
+  // 更新标定参数后，建议重置滤波器避免“旧值拖尾”
+  tofFilt[0] = NAN; tofFilt[1] = NAN; tofFilt[2] = NAN;
+  Serial.printf(">>> TOF_PARAM updated: %s = %.3f\n", key.c_str(), val);
 }
 
 // 归一化角度到 [-180, 180]
@@ -129,8 +211,20 @@ static bool decideViveGoto(String &cmd) {
 }
 
 void sendToServant(const String &cmd) {
+  // 底盘命令去重+限频，平衡延迟与串口带宽
+  static String lastCmd = "";
+  static uint32_t lastMs = 0;
+  const uint32_t now = millis();
+  const uint32_t MIN_TX_MS = 10; // 约 100Hz：更快响应（遥测已降频，串口有余量）
+
+  if (cmd == lastCmd && (now - lastMs) < MIN_TX_MS) return;
+  lastCmd = cmd;
+  lastMs = now;
+
   ServantSerial.println(cmd);
-  Serial.println(cmd);
+
+  // 如需调试可打开：会影响实时性
+  // Serial.print("[TX->SERVANT] "); Serial.println(cmd);
 }
 
 void setup() {
@@ -146,12 +240,25 @@ void setup() {
 
   // Owner RX=GPIO18, TX=GPIO17 （与 Servant 交叉连接；Servant TX=17 -> Owner RX=18）
   ServantSerial.begin(115200, SERIAL_8N1, 18, 17);
+  // readStringUntil 默认超时较长，可能导致“偶发卡顿”；把超时设短一点更实时
+  ServantSerial.setTimeout(5);
   Serial.println("UART to servant ready. Waiting for Start...");
 }
 
 void loop() {
-  static uint32_t lastToFPrint = 0;
+  static uint32_t lastToFRead = 0;
+  static uint16_t tofRawLatest[3] = {0, 0, 0};
+  static bool tofUpdated = false;
+  static uint32_t lastTelemMs = 0;
   uint16_t tofMon[3];
+
+  // 0. 统一周期读取一次 ToF（避免 auto/monitor 重复读 I2C）
+  // 提高读取频率以加快巡墙响应（VL53L0X 支持 ~30ms 单次测量，10ms 读取可能会重复拿到旧值，但能更快响应新值）
+  if (millis() - lastToFRead >= 10) { // 原 20ms → 10ms，巡墙响应更快
+    lastToFRead = millis();
+    ToF_read(tofRawLatest);
+    tofUpdated = true;
+  }
 
   // 1. 处理来自 Servant 的 Web/上位机指令
   if (ServantSerial.available()) {
@@ -269,7 +376,7 @@ void loop() {
       planStartFixed = false;
       Serial.println(">>> PLAN start cleared (will use live VIVE)");
     }
-    // 新：单点规划命令，格式 PLAN1:x,y
+    // 新：单点规划命令，格式 PLAN1:x,y（低频模式）
     else if (webCmd.startsWith("PLAN1:")) {
       int c = webCmd.indexOf(',');
       if (c > 6) {
@@ -278,6 +385,9 @@ void loop() {
         if (!hasViveFix) {
           Serial.println(">>> PLAN1 失败：无 VIVE 坐标");
         } else {
+          // 确保使用低频模式
+          mp_updateParam("MP_MF_ENABLED", 0);
+          mp_updateParam("MP_LF_ENABLED", 1);
           float list[1][2] = {{tx, ty}};
           bool ok = mp_planTargets(viveX, viveY, list, 1, MP_PATH_MARGIN);
           if (ok) {
@@ -285,13 +395,41 @@ void loop() {
             isManualPlan = false;
             isAutoRunning = false;
             isViveGoto = false;
-            Serial.printf(">>> PLAN1 规划成功 -> 目标(%.1f, %.1f)\n", tx, ty);
+            Serial.printf(">>> PLAN1 规划成功 -> 目标(%.1f, %.1f) [低频模式]\n", tx, ty);
           } else {
             Serial.println(">>> PLAN1 规划失败：路径被障碍挡住或路点超限");
           }
         }
       } else {
         Serial.println(">>> PLAN1 格式: PLAN1:x,y");
+      }
+    }
+    // 新：中频规划命令，格式 PLAN_MF:x,y
+    else if (webCmd.startsWith("PLAN_MF:")) {
+      int c = webCmd.indexOf(',');
+      if (c > 8) {
+        float tx = webCmd.substring(8, c).toFloat();
+        float ty = webCmd.substring(c + 1).toFloat();
+        if (!hasViveFix) {
+          Serial.println(">>> PLAN_MF 失败：无 VIVE 坐标");
+        } else {
+          // 启用中频模式
+          mp_updateParam("MP_LF_ENABLED", 0);
+          mp_updateParam("MP_MF_ENABLED", 1);
+          float list[1][2] = {{tx, ty}};
+          bool ok = mp_planTargets(viveX, viveY, list, 1, MP_PATH_MARGIN);
+          if (ok) {
+            isPathPlanMode = true;
+            isManualPlan = false;
+            isAutoRunning = false;
+            isViveGoto = false;
+            Serial.printf(">>> PLAN_MF 规划成功 -> 目标(%.1f, %.1f) [中频模式]\n", tx, ty);
+          } else {
+            Serial.println(">>> PLAN_MF 规划失败：路径被障碍挡住或路点超限");
+          }
+        }
+      } else {
+        Serial.println(">>> PLAN_MF 格式: PLAN_MF:x,y");
       }
     }
     // 新：使用锁定起点规划执行，格式 PLAN_GO:x,y
@@ -334,8 +472,14 @@ void loop() {
       if (eqPos > 0) {
         String paramName = paramStr.substring(0, eqPos);
         float paramValue = paramStr.substring(eqPos + 1).toFloat();
-        updateWallParam(paramName, paramValue);
-        Serial.printf(">>> 参数更新: %s = %.2f\n", paramName.c_str(), paramValue);
+        paramName.trim();
+        // 兼容：PARAM 同时支持巡墙参数与 ToF 标定/滤波参数
+        if (paramName.startsWith("TOF_")) {
+          updateToFParam(paramName, paramValue);
+        } else {
+          updateWallParam(paramName, paramValue);
+          Serial.printf(">>> 参数更新: %s = %.2f\n", paramName.c_str(), paramValue);
+        }
       }
     }
     // 解析 VIVE 数据: "VIVE:x,y,a"
@@ -370,21 +514,33 @@ void loop() {
 
   // 2. auto mode 开了才跑巡墙，并打印 ToF 读数到串口监视器
   if (isAutoRunning) {
-    if (ToF_read(tofDist)) {
-      uint16_t F  = applyToFCal(tofDist[0], TOF_OFFSET_F, TOF_SCALE_F);
-      uint16_t R1 = applyToFCal(tofDist[1], TOF_OFFSET_R1, TOF_SCALE_R1);
-      uint16_t R2 = applyToFCal(tofDist[2], TOF_OFFSET_R2, TOF_SCALE_R2);
+    // 只在 ToF 更新后才计算/下发一次控制命令，避免重复发送同一条命令导致延迟
+    if (tofUpdated) {
+      uint16_t F  = applyToFCalFiltered(tofRawLatest[0], 0);
+      uint16_t R1 = applyToFCalFiltered(tofRawLatest[1], 1);
+      uint16_t R2 = applyToFCalFiltered(tofRawLatest[2], 2);
 
       // 串口监视器输出 ToF 距离（mm）
-      Serial.printf("ToF: F=%u mm, R1=%u mm, R2=%u mm\n", F, R1, R2);
+      // 这一行打印也会拖慢实时性，如需观察可保留；否则建议降低频率
+      // Serial.printf("ToF: F=%u mm, R1=%u mm, R2=%u mm\n", F, R1, R2);
 
       String cmd = decideWallFollowing(F, R1, R2);
       sendToServant(cmd);
-    } else {
-       Serial.println("ToF: no data");
-       sendToServant("S");
+
+      // cache latest wall-follow telemetry for Web
+      g_wfAuto = 1;
+      g_wfCmd = cmd;
+      g_wfState = wf_getState();
+      g_wfTurn = wf_getTurn();
+      g_wfAngle = wf_getAngleDeg();
+      g_wfErr = wf_getDistError();
+      g_wfLastMs = millis();
+      tofUpdated = false;
     }
   } 
+  else {
+    g_wfAuto = 0;
+  }
 
   // 3. VIVE 点对点（独立于巡墙）
   if (isViveGoto) {
@@ -410,18 +566,29 @@ void loop() {
     sendToServant(cmd);
   }
 
-  // 6. 独立的 ToF 串口监视输出（不依赖 auto 模式）
-  if (millis() - lastToFPrint >= 200) { // 每 200ms 一次
-    lastToFPrint = millis();
-    if (ToF_read(tofMon)) {
-      uint16_t Fm  = applyToFCal(tofMon[0], TOF_OFFSET_F, TOF_SCALE_F);
-      uint16_t R1m = applyToFCal(tofMon[1], TOF_OFFSET_R1, TOF_SCALE_R1);
-      uint16_t R2m = applyToFCal(tofMon[2], TOF_OFFSET_R2, TOF_SCALE_R2);
-      Serial.printf("[ToF MON] F=%u mm, R1=%u mm, R2=%u mm\n", Fm, R1m, R2m);
-    } else {
-      Serial.println("[ToF MON] no data");
-    }
+  // 6. ToF/WF 遥测输出（给网页实时显示）
+  // 降低推送频率以减少 UART 带宽占用，避免命令执行延迟
+  if (millis() - lastTelemMs >= 150) { // ~7Hz 推送（原 50ms/20Hz 太快会堵塞 UART）
+    lastTelemMs = millis();
+    uint16_t Fm  = applyToFCalFiltered(tofRawLatest[0], 0);
+    uint16_t R1m = applyToFCalFiltered(tofRawLatest[1], 1);
+    uint16_t R2m = applyToFCalFiltered(tofRawLatest[2], 2);
+
+    // 发给 Servant（供网页实时显示）
+    ServantSerial.printf("TOF:%u,%u,%u\n", Fm, R1m, R2m);
+
+    // 发给 Servant：当前巡墙策略/状态（供网页显示）
+    unsigned long age = (g_wfLastMs == 0) ? 999999 : (millis() - g_wfLastMs);
+    ServantSerial.printf("WF:%u,%u,%d,%.2f,%.2f,%s,%lu\n",
+                         (unsigned)g_wfAuto,
+                         (unsigned)g_wfState,
+                         g_wfTurn,
+                         g_wfAngle,
+                         g_wfErr,
+                         g_wfCmd.c_str(),
+                         age);
   }
 
-  delay(50);
+  // 让出一点时间给系统任务，使用 yield() 减少延迟
+  yield();
 }

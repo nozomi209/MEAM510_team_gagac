@@ -1,39 +1,4 @@
-// gagac-2.ino 
-
-/*
- * gagac-2.ino — Servant 板主控程序（底盘执行 + 网页控制 + Vive 采集）
- *
- * 本文件主要包含：
- * 1) 底盘执行层（电机/编码器/PID）
- *    - 接收来自网页或 Owner 的运动命令（"Fxx/Bxx/Lxx/Rxx/S"），并转换为电机目标转速/转向
- *
- * 2) Vive 采集与姿态计算
- *    - 读取两只 Vive Tracker 的坐标，计算车体中心 (viveX,viveY) 与朝向角 viveAngle
- *    - 周期性通过 UART 向 Owner 发送：`VIVE:x.xx,y.yy,a.aa`
- *
- * 3) 网页控制与命令路由（HTTP `/cmd`）
- *    - 部分命令本地执行（直接控底盘/伺服/本地序列）
- *    - 部分命令转发到 Owner（如 AUTO_ON/AUTO_OFF、PLAN*/MP_* 等）
- *
- * 4) 手动“按时间走路径”的 SEQ 序列控制 —— 纯本地，不依赖 Owner
- *    - 目的：用一串“方向 + 强度 + 持续时间(ms)”让车按时间依次执行（适合调试/演示/无定位场景）
- *    - 命令入口：网页 `/cmd` 支持
- *        - `SEQ:<payload>` 载入序列（只解析、不启动）
- *        - `SEQ_START` 开始执行
- *        - `SEQ_STOP` 立刻停止并清空运行状态
- *    - payload 格式：多个 step 用 `;` 分隔，每个 step 为：
- *        - `<mode>,<value>,<duration_ms>`
- *        - mode ∈ {F,B,L,R,S}
- *          - F/B：直行，value=速度百分比(0~100)，duration_ms=持续毫秒
- *          - L/R：原地转向，value=转向强度(0~100)，duration_ms=持续毫秒
- *          - S：停车保持，value 可填 0
- *    - 示例（前进2秒→停0.3秒→左转0.8秒→停0.2秒）：
- *        `SEQ:F,60,2000;S,0,300;L,60,800;S,0,200`
- *
- * 相关实现函数：
- * - `seqParse(payload)`：解析并装载步骤数组
- * - `seqStart()` / `seqStop()` / `seqProcess()`：启动/停止/循环执行（基于 millis 计时）
- */
+// gagac 最后一版
 
 // 主控（Servant）程序：负责电机驱动、编码器测速、VIVE 追踪、Wi-Fi 网页控制，以及与 Owner 板的 UART 通信
 #include <WiFi.h>
@@ -47,9 +12,80 @@
 //Fighting
 #include <ESP32Servo.h> 
 
-#define TOPHAT_ADDR 0x28
-#define PIN_I2C_SDA 15  // GPIO 15
-#define PIN_I2C_SCL 16  //GPIO 16
+// ======= 简单序列执行（直行/转向按时间顺序执行，纯网页控制用） =======
+struct SeqStep {
+    char mode;         // 'F','B','L','R'
+    float value;       // speed or turn rate
+    uint32_t duration; // ms
+};
+
+//===================================================================================
+#define I2C_SLAVE_ADDR 0x28
+#define SDA_PIN 15
+#define SCL_PIN 16
+#define I2C_FREQ 40000
+
+// 每 0.5 s 报告一次 package 数
+const unsigned long I2C_PERIOD_MS = 500;
+unsigned long lastI2CTime = 0;
+
+// 这 0.5 s 内网页发出的“控制包”数量（cmd / set_target / attack / capture / stop / servo 等）
+//uint8_t wifi_packets = 0;
+
+// 从 TopHat 读回的 health（0 = dead，>0 = alive）
+uint8_t tophat_health = 255;
+
+// === 调试模式（必须在 I2C 函数之前声明）===
+bool debugMode = false;  // 调试模式开关（网页可控）
+String debugLog = "";    // 调试日志缓冲（用于网页显示）
+const int DEBUG_LOG_MAX = 2000; // 日志最大长度
+
+void debugPrint(const String& msg) {
+  if (debugMode) {
+    Serial.print(msg);
+    debugLog += msg;
+    if (debugLog.length() > DEBUG_LOG_MAX) {
+      debugLog = debugLog.substring(debugLog.length() - DEBUG_LOG_MAX);
+    }
+  }
+}
+
+void debugPrintln(const String& msg) {
+  debugPrint(msg + "\n");
+}
+
+// ========================= I2C 工具函数 =========================
+
+// I2C 发送（调试模式下打印详细信息）
+void send_I2C_byte(uint8_t data) {
+  Wire.beginTransmission(I2C_SLAVE_ADDR);
+  Wire.write(data);
+  byte error = Wire.endTransmission();
+  if (error == 0) {
+    if (debugMode) debugPrintln("[I2C] ✅ Sent " + String(data) + " to TopHat");
+  } else {
+    Serial.printf("[I2C] ❌ Send FAILED! Error: %d\n", error);
+    if (debugMode) debugPrintln("[I2C] ❌ Send FAILED! Error: " + String(error));
+  }
+}
+
+uint8_t receive_I2C_byte() {
+  Wire.requestFrom(I2C_SLAVE_ADDR, (uint8_t)1);
+  uint8_t byteIn = tophat_health;
+  if (Wire.available()) {
+    byteIn = Wire.read();
+    if (debugMode) debugPrintln("[I2C] Received Health: " + String(byteIn));
+  } else {
+    if (debugMode) debugPrintln("[I2C] No data from TopHat");
+  }
+  return byteIn;
+}
+
+//==============================================================
+
+
+
+
 
 #define SERVO_PIN 8
 Servo attackServo; // 创建对象
@@ -153,12 +189,7 @@ int pwmOutputR = 0;
 hw_timer_t *controlTimer = NULL;
 volatile bool controlFlag = false;
 
-// ======= 简单序列执行（直行/转向按时间顺序执行，纯网页控制用） =======
-struct SeqStep {
-    char mode;         // 'F','B','L','R'
-    float value;       // speed or turn rate
-    uint32_t duration; // ms
-};
+
 const uint8_t SEQ_MAX = 16;
 SeqStep seqSteps[SEQ_MAX];
 uint8_t seqCount = 0;
@@ -442,7 +473,7 @@ void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
     
-    targetSpeedL = 0.999* targetRPM; //给左轮 - 一点
+    targetSpeedL = 0.983* targetRPM; //给左轮 - 一点
     targetSpeedR = targetRPM;
 }
 
@@ -454,6 +485,31 @@ void setCarTurn(float speedPercent, float turnRate) {
     float turnFactor = turnRate / 100.0;
     targetSpeedL = baseSpeed * (1.0 + turnFactor);  // 
     targetSpeedR = baseSpeed * (1.0 - turnFactor); ///
+}
+
+// 原地转向（Pivot/Spin）：一轮前进，一轮后退，绕中心旋转
+// turnRate > 0: 右转（左轮前进，右轮后退）
+// turnRate < 0: 左转（左轮后退，右轮前进）
+void setCarPivot(float turnRate) {
+    float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
+    float spinRPM = maxRPM * abs(turnRate) / 100.0;
+    
+    // 切换方向时清零积分器，避免 PID 累积误差
+    integralL = 0;
+    integralR = 0;
+    
+    if (turnRate > 0) {
+        // 原地右转：左轮前进，右轮后退
+        targetSpeedL = spinRPM;
+        targetSpeedR = -spinRPM;
+    } else if (turnRate < 0) {
+        // 原地左转：左轮后退，右轮前进
+        targetSpeedL = -spinRPM;
+        targetSpeedR = spinRPM;
+    } else {
+        targetSpeedL = 0;
+        targetSpeedR = 0;
+    }
 }
 
 //test hardware
@@ -524,6 +580,22 @@ void handleCommand(String cmd) {
         float speed = cmd.substring(1).toFloat();
         setCarSpeed(-speed);
     }
+    // 原地转向（Pivot）：PL = 原地左转，PR = 原地右转
+    else if (cmd.startsWith("PL")) {
+        float turnRate = cmd.substring(2).toFloat();
+        Serial.printf("[PIVOT] PL%.0f → targetL=%.1f, targetR=%.1f\n", 
+                      turnRate, -turnRate * MOTOR_MAX_RPM_RATED * 0.9 / 100.0,
+                      turnRate * MOTOR_MAX_RPM_RATED * 0.9 / 100.0);
+        setCarPivot(-turnRate);  // 负值 = 左转
+    }
+    else if (cmd.startsWith("PR")) {
+        float turnRate = cmd.substring(2).toFloat();
+        Serial.printf("[PIVOT] PR%.0f → targetL=%.1f, targetR=%.1f\n", 
+                      turnRate, turnRate * MOTOR_MAX_RPM_RATED * 0.9 / 100.0,
+                      -turnRate * MOTOR_MAX_RPM_RATED * 0.9 / 100.0);
+        setCarPivot(turnRate);   // 正值 = 右转
+    }
+    // 差速转向（原有）：L = 差速左转，R = 差速右转
     else if (cmd.startsWith("L")) {
         float turnRate = cmd.substring(1).toFloat();
         setCarTurn(50, -turnRate);  
@@ -538,7 +610,7 @@ void handleCommand(String cmd) {
 
 
 
-    // 攻击伺服：网页“Start/Stop Attack”按钮下发 SV1 / SV0
+    ///到时候网页要加button
     else if (cmd.startsWith("SV")) {
             int val = cmd.substring(2).toInt(); 
             
@@ -574,6 +646,20 @@ void handleCommand(String cmd) {
 
 WebServer server(80);
 
+// Latest ToF telemetry from Owner (via UART)
+static uint16_t tofF = 0, tofR1 = 0, tofR2 = 0;
+static unsigned long tofLastMs = 0;
+
+// Latest wall-follow telemetry from Owner (via UART)
+static uint8_t wfAuto = 0;
+static uint8_t wfState = 0;
+static int wfTurn = 0;
+static float wfAngle = 0.0f;
+static float wfErr = 0.0f;
+static String wfCmd = "S";
+static unsigned long wfAgeMs = 999999;
+static unsigned long wfLastMs = 0;
+
 //Routes
 void handleRoot() { server.send(200, "text/html", webpage); }
 
@@ -591,11 +677,17 @@ void setup() {
 
     //来自 owner 的 UART（实际接线：Servant TX=GPIO17 -> Owner RX，Servant RX=GPIO18 <- Owner TX）
     OwnerSerial.begin(115200, SERIAL_8N1, 18, 17);
+    // 避免 readStringUntil 因为缺换行卡住太久
+    OwnerSerial.setTimeout(5);
     Serial.println("UART from owner ready");
     
-    // TopHat I2C init
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-    Serial.println("TopHat I2C Initialized on pins 15/16");
+    // ⭐ I2C 初始化
+    Wire.begin(SDA_PIN, SCL_PIN, I2C_FREQ);
+    lastI2CTime = millis();
+    Serial.printf("I2C Master init: SDA=%d, SCL=%d, freq=%d Hz\n",
+                SDA_PIN, SCL_PIN, I2C_FREQ);
+
+    Serial.println("AP Ready! Waiting for commands...");
 
 
 
@@ -631,6 +723,59 @@ void setup() {
         json += "}";
         server.send(200, "application/json", json);
     });
+
+    // ToF data endpoint (forwarded from Owner via UART)
+    server.on("/tofData", [](){
+        String json = "{";
+        json += "\"f\":" + String(tofF);
+        json += ",\"r1\":" + String(tofR1);
+        json += ",\"r2\":" + String(tofR2);
+        unsigned long age = (tofLastMs == 0) ? 999999 : (millis() - tofLastMs);
+        json += ",\"age_ms\":" + String(age);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+
+    server.on("/wfData", [](){
+        String json = "{";
+        json += "\"auto\":" + String(wfAuto);
+        json += ",\"state\":" + String(wfState);
+        json += ",\"turn\":" + String(wfTurn);
+        json += ",\"angle\":" + String(wfAngle, 2);
+        json += ",\"err\":" + String(wfErr, 2);
+        json += ",\"cmd\":\"" + wfCmd + "\"";
+        unsigned long age = (wfLastMs == 0) ? 999999 : (millis() - wfLastMs);
+        json += ",\"age_ms\":" + String(age);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+
+    // === 调试模式 API ===
+    server.on("/debugLog", [](){
+        String json = "{";
+        json += "\"enabled\":" + String(debugMode ? "true" : "false");
+        json += ",\"log\":\"" + debugLog + "\"";
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+
+    server.on("/debugOn", [](){
+        debugMode = true;
+        debugLog = "=== Debug Mode ON ===\n";
+        Serial.println(">>> Debug Mode ENABLED");
+        server.send(200, "text/plain", "Debug ON");
+    });
+
+    server.on("/debugOff", [](){
+        debugMode = false;
+        Serial.println(">>> Debug Mode DISABLED");
+        server.send(200, "text/plain", "Debug OFF");
+    });
+
+    server.on("/debugClear", [](){
+        debugLog = "";
+        server.send(200, "text/plain", "Log cleared");
+    });
     
     // 保留单独端点以兼容（可选）
     server.on("/viveX", [](){
@@ -648,15 +793,30 @@ void setup() {
     server.on("/cmd", [](){
         wifiPacketCount++; //wifi包
         String data = server.arg("data");
-        Serial.print("Web: ");
-        Serial.println(data);
+        // 调试模式下打印所有网页命令
+        if (debugMode) {
+            debugPrintln("[WEB→] " + data);
+        } else {
+            Serial.print("Web: ");
+            Serial.println(data);
+        }
 
         // movement control
         if (data.startsWith("F")) { setCarSpeed(data.substring(1).toFloat()); }
         else if (data.startsWith("B")) { setCarSpeed(-data.substring(1).toFloat()); }
-        // [修改] 网页按L -> 传负数
+        // 原地转向（Pivot）：PL = 原地左转，PR = 原地右转
+        else if (data.startsWith("PL")) { 
+            float turnRate = data.substring(2).toFloat();
+            Serial.printf("[PIVOT] PL%.0f\n", turnRate);
+            setCarPivot(-turnRate);  // 负值 = 左转
+        }
+        else if (data.startsWith("PR")) { 
+            float turnRate = data.substring(2).toFloat();
+            Serial.printf("[PIVOT] PR%.0f\n", turnRate);
+            setCarPivot(turnRate);   // 正值 = 右转
+        }
+        // 差速转向：L = 差速左转，R = 差速右转
         else if (data.startsWith("L")) { setCarTurn(50, -data.substring(1).toFloat()); } 
-        // [修改] 网页按R -> 传正数
         else if (data.startsWith("R")) { setCarTurn(50, data.substring(1).toFloat()); }
         else if (data == "S") { stopMotors(); }
 
@@ -671,18 +831,10 @@ void setup() {
             Serial.println("Sent AUTO_OFF to Owner");
             stopMotors(); // 顺便让车停下
         }
-        // 手动规划开关/路线下发（传统Route方式）
+        // 手动规划开关/路线下发
         else if (data == "MP_ON" || data == "MP_OFF" || data.startsWith("MP_ROUTE:")) {
             OwnerSerial.println(data);
             Serial.printf("Sent %s to Owner (manual planner)\n", data.c_str());
-        }
-        // 新的路径规划命令（Plan to Target方式）
-        else if (data.startsWith("PLAN1:") || data == "PLAN_STOP" || 
-                 data.startsWith("PLAN_OBS:") || data == "PLAN_OBS_OFF" ||
-                 data.startsWith("PLAN_BOUND:") || 
-                 data.startsWith("PLAN_SET_START:") || data == "PLAN_CLEAR_START") {
-            OwnerSerial.println(data);
-            Serial.printf("Sent %s to Owner (path planner)\n", data.c_str());
         }
         // 手动规划参数下发
         else if (data.startsWith("MP_PARAM:")) {
@@ -743,9 +895,10 @@ void setup() {
             setCarTurn(50, val);
             Serial.printf("↔ slider turn %.1f\n", val);
         }
+
+        // 【新增】把攻击指令传给执行函数
         else if (data.startsWith("SV")) {
-            handleCommand(data); 
-            Serial.println("Web Attack Command Executed");
+            handleCommand(data);
         }
 
         server.send(200, "text/plain", "OK");
@@ -829,6 +982,11 @@ void setup() {
     
     Serial.println("System Ready");
 }
+
+
+
+
+
 
 void loop() {
     // 轮询处理 Web 请求
@@ -921,30 +1079,71 @@ void loop() {
     }
 
     //commands from owner (UART)
-        // ===== commands from owner (UART) =====
-    if (OwnerSerial.available()) {
+    // ===== commands from owner (UART) =====
+    // 一次把 UART 缓冲读干净，避免积压导致"执行延迟"
+    while (OwnerSerial.available()) {
     String cmd = OwnerSerial.readStringUntil('\n');
-    Serial.print("[OWNER CMD] ");
-    Serial.println(cmd);
+    cmd.trim();
+
+    // 调试模式下显示 Owner 发来的命令（排除高频遥测）
+    if (debugMode && !cmd.startsWith("TOF:") && !cmd.startsWith("WF:") && !cmd.startsWith("VIVE:")) {
+        debugPrintln("[OWNER→] " + cmd);
+    }
+
+    // Owner ToF telemetry: "TOF:F,R1,R2"
+    if (cmd.startsWith("TOF:")) {
+        String payload = cmd.substring(4);
+        int c1 = payload.indexOf(',');
+        int c2 = payload.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            tofF = (uint16_t)payload.substring(0, c1).toInt();
+            tofR1 = (uint16_t)payload.substring(c1 + 1, c2).toInt();
+            tofR2 = (uint16_t)payload.substring(c2 + 1).toInt();
+            tofLastMs = millis();
+        }
+    } else if (cmd.startsWith("WF:")) {
+        // Format: WF:auto,state,turn,angle,err,cmd,age_ms
+        // Example: WF:1,0,12,3.50,-20.00,F60,120
+        String payload = cmd.substring(3);
+        int p1 = payload.indexOf(',');
+        int p2 = payload.indexOf(',', p1 + 1);
+        int p3 = payload.indexOf(',', p2 + 1);
+        int p4 = payload.indexOf(',', p3 + 1);
+        int p5 = payload.indexOf(',', p4 + 1);
+        int p6 = payload.indexOf(',', p5 + 1);
+        if (p1 > 0 && p2 > p1 && p3 > p2 && p4 > p3 && p5 > p4 && p6 > p5) {
+            wfAuto = (uint8_t)payload.substring(0, p1).toInt();
+            wfState = (uint8_t)payload.substring(p1 + 1, p2).toInt();
+            wfTurn = payload.substring(p2 + 1, p3).toInt();
+            wfAngle = payload.substring(p3 + 1, p4).toFloat();
+            wfErr = payload.substring(p4 + 1, p5).toFloat();
+            wfCmd = payload.substring(p5 + 1, p6);
+            wfAgeMs = (unsigned long)payload.substring(p6 + 1).toInt();
+            wfLastMs = millis();
+        }
+    } else {
+        Serial.print("[OWNER CMD] ");
+        Serial.println(cmd);
 
     //OwnerSerial.print("[SERVANT CMD] ");
     //OwnerSerial.println(cmd);
 
-    handleCommand(cmd);
+        handleCommand(cmd);
+    }
 }
 
     
-    // update status 
+    // update status（调试模式下输出详细信息）
     static unsigned long lastPrintTime = 0;
-    if (millis() - lastPrintTime > 200) {
+    if (millis() - lastPrintTime > 300) { // 调试模式用 300ms
         lastPrintTime = millis();
         
-        if (targetSpeedL != 0 || targetSpeedR != 0) {
-            Serial.printf("⚙ L: target=%5.1f current=%5.1f error=%+5.1f PWM=%4d | ", 
-                         targetSpeedL, speedL, errorL, pwmOutputL);
-            Serial.printf("R: target=%5.1f current=%5.1f error=%+5.1f PWM=%4d | ", 
-                         targetSpeedR, speedR, errorR, pwmOutputR);
-            Serial.printf("Kp=%.2f\n", Kp);  // show current kp
+        // 调试模式下输出电机状态
+        if (debugMode && (targetSpeedL != 0 || targetSpeedR != 0)) {
+            char buf[120];
+            snprintf(buf, sizeof(buf), "⚙ L:%.1f/%.1f R:%.1f/%.1f PWM:%d/%d\n", 
+                     targetSpeedL, speedL, targetSpeedR, speedR, pwmOutputL, pwmOutputR);
+            debugPrint(buf);
         }
         
         // Print VIVE data periodically
@@ -981,26 +1180,23 @@ void loop() {
                          sqrt(pow(deltaX, 2) + pow(deltaY, 2)));
             Serial.println("═══════════════════════════════════════\n");
         }
-        // 正常模式：1秒输出一次
-        else if (!isViveTestMode && millis() - lastVivePrintTime > 1000 && isViveActive) {
+        // 正常模式：2秒输出一次（降低频率减少延迟）
+        else if (!isViveTestMode && millis() - lastVivePrintTime > 2000 && isViveActive) {
             lastVivePrintTime = millis();
-            Serial.printf("📍 VIVE: X=%.1f, Y=%.1f, Angle=%.1f° | Status: F=%d, B=%d\n",
-                         viveX, viveY, viveAngle,
-                         viveFront.getStatus(), viveBack.getStatus());
+            Serial.printf("📍 VIVE: X=%.1f, Y=%.1f, Angle=%.1f°\n", viveX, viveY, viveAngle);
         }
-        
-        // Send VIVE data to owner board via UART (every 100ms for navigation)
-        static unsigned long lastViveUartTime = 0;
-        if (millis() - lastViveUartTime > 100 && isViveActive) {
-            lastViveUartTime = millis();
-            // Format: "VIVE:x.xx,y.yy,a.aa\n"
-            OwnerSerial.printf("VIVE:%.2f,%.2f,%.2f\n", viveX, viveY, viveAngle);
-        }
+    }
+    
+    // Send VIVE data to owner board via UART (每 100ms，移到 500ms 块外面！)
+    static unsigned long lastViveUartTime = 0;
+    if (millis() - lastViveUartTime > 100 && isViveActive) {
+        lastViveUartTime = millis();
+        OwnerSerial.printf("VIVE:%.2f,%.2f,%.2f\n", viveX, viveY, viveAngle);
     }
     
     // 本地序列执行（直行/转向按时间）
     seqProcess();
-    
+/*
     //TopHat update
     if (millis() - lastTopHatTime > 500) {
         lastTopHatTime = millis();
@@ -1011,35 +1207,53 @@ void loop() {
         byte error = Wire.endTransmission();
         
         if (error != 0) {
-           // Serial.print("TopHat I2C Error: "); Serial.println(error);
+           Serial.print("TopHat I2C Error: "); Serial.println(error);
         }
 
         wifiPacketCount = 0; // 重计
     }
 
+*/
+
+// =================== I2C Health 更新（非阻塞版本） ======================
+  // 使用状态机避免 delay() 阻塞 loop，减少命令延迟
+  static uint8_t i2cState = 0; // 0=idle, 1=waiting_for_read
+  static unsigned long i2cSendTime = 0;
+  unsigned long now_ms = millis();
+  
+  if (i2cState == 0 && (now_ms - lastI2CTime >= I2C_PERIOD_MS)) {
+    // 发送数据
+    send_I2C_byte(wifiPacketCount);
+    i2cSendTime = now_ms;
+    i2cState = 1; // 进入等待状态
+  }
+  else if (i2cState == 1 && (now_ms - i2cSendTime >= 10)) {
+    // 等待 10ms 后再读取（非阻塞）
+    tophat_health = receive_I2C_byte();
+    // 减少串口打印频率，只在 health 变化时打印
+    static uint8_t lastHealth = 255;
+    if (tophat_health != lastHealth) {
+      Serial.printf("[HEALTH] HP = %u\n", tophat_health);
+      lastHealth = tophat_health;
+    }
+    wifiPacketCount = 0;
+    lastI2CTime = now_ms;
+    i2cState = 0; // 回到空闲状态
+  }
+
+
 
     // --- Attack Loop Logic (Non-blocking) ---
-    // 每 1 秒在 0/180 度间往返一次，SV0 会立即归位并停止
     if (isAttacking) {
-        // 检查是否过去了 1000ms (1秒)
         if (millis() - lastAttackTime > 1000) {
-            lastAttackTime = millis(); // 更新时间
-            
-            if (attackState == false) {
-                // 当前是0，转到180
-                attackServo.write(180);
-                Serial.println("Attack: Smash! (180)");
-                attackState = true;
-            } else {
-                // 当前是180，收回0
-                attackServo.write(0);
-                Serial.println("Attack: Reset (0)");
-                attackState = false;
-            }
+            lastAttackTime = millis();
+            attackState = !attackState;
+            attackServo.write(attackState ? 180 : 0);
+            if (debugMode) debugPrintln(attackState ? "Attack: Smash! (180)" : "Attack: Reset (0)");
         }
     }
 
-    delay(5);
-
-
+    // 减少循环末尾延迟以提高响应速度
+    // 使用 yield() 让出 CPU 给 WiFi 任务，比 delay() 更高效
+    yield();
 }
