@@ -10,33 +10,33 @@ static bool isValid(uint16_t d) { return (d > 1 && d < 3000); }
 // ============ 巡墙参数 ============
 volatile bool WALL_FOLLOW_ENABLED = true;
 
-float TOF_SPACING_MM = 143.0f;      // 两个右侧 ToF 在车身纵向的间距（mm）
-float WALL_TARGET_DIST = 200.0f;    // 目标离墙距离（mm）
-float WALL_DIST_KP     = 0.10f;     // 距离环 Kp
-float WALL_ANGLE_KP    = 1.50f;     // 角度环 Kp
-float FRONT_OBS_DIST   = 300.0f;    // 前方障碍阈值（mm）
+float TOF_SPACING_MM = 160.0f;      // 两个右侧 ToF 在车身纵向的间距（mm）
+float WALL_TARGET_DIST = 125.0f;    // 目标离墙距离（mm）
+float WALL_DIST_KP     = 0.18f;     // 距离环 Kp
+float WALL_ANGLE_KP    = 1.30f;     // 角度环 Kp
+float FRONT_OBS_DIST   = 330.0f;    // 前方障碍阈值（mm）
 
-int   WF_SPEED_FWD        = 50;     // 直行速度（0~100）
-int   WF_MAX_TURN_RIGHT   = 70;     // 最大右转力度（0~100）
-int   WF_MAX_TURN_LEFT    = 70;     // 最大左转力度（0~100）
+int   WF_SPEED_FWD        = 60;     // 直行速度（0~100）
+int   WF_MAX_TURN_RIGHT   = 100;     // 最大右转力度（0~100）
+int   WF_MAX_TURN_LEFT    = 100;     // 最大左转力度（0~100）
 
-float FRONT_PANIC_DIST = 60.0f;     // 前方紧急倒车距离（mm）
-float WALL_LOST_DIST   = 650.0f;    // 丢墙判定距离（mm）
+float FRONT_PANIC_DIST = 65.0f;     // 前方紧急倒车距离（mm）
+float WALL_LOST_DIST   = 340.0f;    // 丢墙判定距离（mm）
 
 // ============ 胡同逃脱参数（倒车改变姿态 + 小半径转向）============
 float ALLEY_FRONT_CLOSE   = 250.0f;   // 前方距离 < 这个值触发胡同检测
-float ALLEY_RIGHT_CLOSE   = 350.0f;   // 右边距离 < 这个值触发胡同检测
-int   ALLEY_BACKUP_SPEED  = 40;       // 倒车速度 (0~100)
-int   ALLEY_BACKUP_TURN   = 30;       // 倒车时转向力度（向左打方向，让车尾向右靠墙）
-unsigned long ALLEY_BACKUP_MS = 600;  // 倒车时间 (ms)
-unsigned long ALLEY_CHECK_MS  = 100;  // 倒车后检测时间 (ms)
-float ALLEY_FRONT_CLEAR   = 400.0f;   // 前方距离 > 这个值认为"可以走了"
+float ALLEY_RIGHT_CLOSE   = 190.0f;   // 右边距离 < 这个值触发胡同检测
+int   ALLEY_BACKUP_SPEED  = 4;       // 倒车速度 (0~100)
+int   ALLEY_BACKUP_TURN   = 20;       // 倒车时转向力度（向左打方向，让车尾向右靠墙）
+unsigned long ALLEY_BACKUP_MS = 400;  // 倒车时间 (ms)
+unsigned long ALLEY_CHECK_MS  = 25;  // 倒车后检测时间 (ms)
+float ALLEY_FRONT_CLEAR   = 100.0f;   // 前方距离 > 这个值认为"可以走了"
 
 // 出胡同后小半径转向参数
-int   ALLEY_EXIT_TURN_STRENGTH = 50;  // 小半径右转力度 (0~100)
-int   ALLEY_EXIT_FWD_SPEED     = 40;  // 边走边转的前进速度
+int   ALLEY_EXIT_TURN_STRENGTH = 0;  // 小半径右转力度 (0~100)
+int   ALLEY_EXIT_FWD_SPEED     = 3;  // 边走边转的前进速度
 unsigned long ALLEY_EXIT_TURN_MS = 400; // 小半径转向时间 (ms)
-unsigned long ALLEY_EXIT_FWD_MS  = 300; // 转完后直行稳定时间 (ms)
+unsigned long ALLEY_EXIT_FWD_MS  = 200; // 转完后直行稳定时间 (ms)
 
 // 出拐角序列时间（正常拐角，不是胡同）
 unsigned long WF_SEQ_EXIT_STRAIGHT_MS = 350;
@@ -44,7 +44,7 @@ unsigned long WF_SEQ_EXIT_TURN_MS     = 450;
 unsigned long WF_SEQ_EXIT_PAUSE_MS    = 200;
 
 // 直行死区
-int WF_TURN_DEADBAND = 14;
+int WF_TURN_DEADBAND = 6;
 
 // 找墙参数
 int   SEEK_TURN_STRENGTH    = 60;   // 找墙时原地右转力度 (0~100)

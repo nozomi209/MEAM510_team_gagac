@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <HardwareSerial.h>
 #include "gagac-web.h"
+#include "gagac-param.h"
 #include "vive_tracker.h"
 #include "vive_utils.h"
 //TOPHAT
@@ -473,7 +474,7 @@ void setCarSpeed(float speedPercent) {
     float maxRPM = MOTOR_MAX_RPM_RATED * 0.9;
     float targetRPM = maxRPM * speedPercent / 100.0;
     
-    targetSpeedL = 0.983* targetRPM; //给左轮 - 一点
+    targetSpeedL = 0.96* targetRPM; //给左轮 - 一点
     targetSpeedR = targetRPM;
 }
 
@@ -702,6 +703,11 @@ void setup() {
 
     //web
     server.on("/", handleRoot);
+
+    // 参数页面
+    server.on("/param", [](){
+        server.send_P(200, "text/html", paramPage);
+    });
 
     // VIVE data endpoint - 合并为一个API以减少网络包
     server.on("/viveData", [](){

@@ -67,7 +67,7 @@ uint8_t mp_routeCount = 0;
 // 参数（可按车速/场景调整，可被运行时更新）
 // 置信区间：允许小误差范围内视为"到达"
 float MP_DIST_TOL     = 50.0f;   // 到点距离阈值 (mm)，50mm 内视为到达
-float MP_ANGLE_TOL    = 12.0f;   // 朝向角容差 (deg)，±12° 内视为对准
+float MP_ANGLE_TOL    = 45.0f;   // 朝向角容差 (deg)，角度要求不严格
 float MP_SPEED_FAR    = 60.0f;   // 远距离速度
 float MP_SPEED_NEAR   = 35.0f;   // 近距离减速
 float MP_TURN_RATE    = 65.0f;   // 原地转向力度
